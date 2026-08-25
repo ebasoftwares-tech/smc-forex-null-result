@@ -469,6 +469,88 @@ class DisplacementConfig(Frozen):
     )
 
 
+class ChochConfig(Frozen):
+    """SPEC 11 -- CHoCH reference selection and the sweep-to-MSS window.
+
+    ``reference_mode`` is the one field here that is not a parameter in the ordinary
+    sense.  SPEC 11.1 is explicit that ``major`` and ``micro`` are **two different
+    strategies**, both pre-registered: they break different levels, at different times,
+    with different stop distances and opposite failure modes.  Reporting a sweep over
+    the two as though it were tuning would be a multiple-testing violation dressed up
+    as a parameter choice (BACKTEST_PROTOCOL 5.6).
+    """
+
+    reference_mode: Literal["major", "micro"] = Field(
+        "major",
+        description=(
+            "ABLATION -- and specifically two separately pre-registered strategy "
+            "variants, not a sweep. SPEC 11.1. 'major' breaks the last unbroken swing "
+            "high before the sweep; 'micro' breaks the first pullback high after it."
+        ),
+    )
+    max_reference_lookback: int = Field(
+        30,
+        ge=1,
+        description=(
+            "FROZEN. SPEC 11.1. Bars back from the sweep extreme within which a major "
+            "reference must have formed."
+        ),
+    )
+    max_reference_distance_atr: float = Field(
+        3.0,
+        gt=0.0,
+        description=(
+            "ABLATION {2.0, 3.0, 4.0}. SPEC 11.1. A reference so far from the sweep "
+            "that the stop would be untradeable is rejected up front as "
+            "REFERENCE_TOO_FAR rather than surviving to be rejected by the risk layer "
+            "-- the distinction matters for the rejection log, which is what the "
+            "counterfactual analysis reads."
+        ),
+    )
+    max_bars_after_sweep: int = Field(
+        12,
+        ge=4,
+        le=24,
+        description=(
+            "TUNABLE {4, 8, 12, 18, 24}. SPEC 11.4. 12 H4 bars is two trading days. "
+            "Under D-002 this is the parameter that makes the model a multi-session "
+            "swing model rather than the intraday one the source material describes."
+        ),
+    )
+    min_bars_after_sweep: int = Field(
+        1,
+        ge=0,
+        description=(
+            "FROZEN. SPEC 11.4 / 9.6 -- the WAIT. Measured from the sweep EXTREME bar, "
+            "while knowability is measured from the sweep CONFIRM bar; both bind. See "
+            "D-009."
+        ),
+    )
+    micro_fractal_n: int = Field(
+        1,
+        ge=1,
+        description=(
+            "ABLATION. SPEC 11.1, `micro` mode only. Registered in PARAMETERS.md as "
+            "`choch.micro_fractal_n` under the swing group."
+        ),
+    )
+
+
+class InvalidateConfig(Frozen):
+    """SPEC 11.6 / 19 -- setup invalidation tolerances."""
+
+    new_extreme_atr: float = Field(
+        0.10,
+        ge=0.0,
+        description=(
+            "FROZEN. SPEC 11.5 clause 5. A small tolerance for a one-tick undercut of "
+            "the sweep extreme. Beyond it the sweep FAILED -- the level was accepted "
+            "through -- and any later break in the setup direction is a bounce inside "
+            "the prevailing trend, not an MSS."
+        ),
+    )
+
+
 class AppConfig(Frozen):
     """The fully resolved configuration.  Hashed to produce ``config_hash``."""
 
@@ -483,6 +565,8 @@ class AppConfig(Frozen):
     liq: LiquidityConfig = LiquidityConfig()
     sweep: SweepConfig = SweepConfig()
     disp: DisplacementConfig = DisplacementConfig()
+    choch: ChochConfig = ChochConfig()
+    invalidate: InvalidateConfig = InvalidateConfig()
     fvg: FvgConfig = FvgConfig()
     eq: EqualLevelsConfig = EqualLevelsConfig()
     range: RangeConfig = RangeConfig()

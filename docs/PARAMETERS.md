@@ -300,10 +300,24 @@ Classification key: **F** = FROZEN, **A** = ABLATION, **T** = TUNABLE.
 | **D-001a** | 2026-08-25 | `tf.sunday_handling`, `tf.stub_merge_threshold`, `tf.min_bar_coverage_warn` | new, added to fix the stub-bar defect D-001 exposed | §2.6 |
 | **D-002** | 2026-08-25 | `liq.tier_confirmation_tf` | `{1:H4, 2:H4, 3:H4}` (was `3:H1`) | Q7 |
 | **D-002a** | 2026-08-25 | `sweep.require_prior_level_age_bars` | domain narrowed to swing-derived sources; value unchanged at 3 | §9.2.1 |
+| **D-009** | 2026-08-25 | `choch.*`, `invalidate.new_extreme_atr` | implemented as registered; **no value changed** | §11 |
 
 D-001a and D-002a are **corrections**, not preferences: each fixes a rule that was wrong as
 written. Neither changes a tunable value, and neither alters the TUNABLE count, which remains 8
 and therefore leaves `M = 6,912` intact for the multiple-testing correction.
+
+D-009 likewise changes no value. It records two things this registry should be read alongside:
+
+1. **`choch.max_bars_after_sweep` (TUNABLE) is inert on the Phase 9 fixture** above 8 bars,
+   while the FROZEN `choch.min_bars_after_sweep` floor decides when almost every MSS fires.
+   Together with D-008 §4 (`min_body_ratio`, ABLATION, binding harder than `min_leg_atr`,
+   TUNABLE) that is two of the eight TUNABLE slots measured as *not* the parameter that decides
+   the outcome — on synthetic data, and therefore to be re-measured on real bars before this
+   classification is relied on.
+2. **`choch.max_reference_distance_atr` (ABLATION) spans the Phase 9 gate verdict**: 2.0 fails
+   it, 3.0 and 4.0 pass. A parameter registered as a secondary question is one of the two
+   largest terms in the funnel. The default stays fixed — §5 below, and `BACKTEST_PROTOCOL.md`
+   §10.2, forbid choosing it by looking at the outcome.
 
 ## §5. Change control
 

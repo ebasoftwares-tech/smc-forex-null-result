@@ -276,3 +276,63 @@ def test_min_history_is_reported_not_enforced(cfg, m15_quarter):
 def test_empty_series_is_handled(cfg):
     empty = build_series("X", "H4", *(np.zeros(0) for _ in range(7)))
     assert detect_swings(empty, cfg).swings == []
+
+
+# ------------------------------------------- SPEC 5.4 visibility over time (D-009)
+
+
+def _series_from(highs, lows):
+    """A series whose fractal geometry is written out directly."""
+    n = len(highs)
+    t = np.arange(n, dtype=np.int64) * 14400
+    o = np.array([(h + l) / 2 for h, l in zip(highs, lows)])
+    return build_series(
+        "X", "H4", t, t + 14400, o, np.array(highs), np.array(lows), o.copy(), np.ones(n)
+    )
+
+
+#: Two swing highs confirm in a row with no swing low between them, because the lows
+#: rise monotonically and so never print a fractal.  SPEC 5.4 normalisation therefore
+#: REPLACEs the first, and the first is gone from the finished store afterwards.
+_REPLACE_HIGHS = [1.0800, 1.0800, 1.0850, 1.0820, 1.0830, 1.0870, 1.0840, 1.0840]
+_REPLACE_LOWS = [1.0700, 1.0710, 1.0720, 1.0730, 1.0740, 1.0750, 1.0760, 1.0770]
+
+
+def test_a_superseded_swing_is_visible_before_it_is_superseded(cfg):
+    """The finished store answers "which swings existed at bar i" with less than a live
+    engine had: a swing later REPLACEd vanishes retroactively from every earlier bar.
+
+    ``visible_at`` is what makes the historical query exact, and SPEC 11.1 selects the
+    CHoCH reference from exactly this set as it stood at the sweep bar.
+    """
+    store = detect_swings(_series_from(_REPLACE_HIGHS, _REPLACE_LOWS), cfg)
+    assert [a.action for a in store.amendments] == ["APPEND", "REPLACE"]
+    assert [s.formed_index for s in store.swings] == [5]  # the first high is gone
+
+    early = store.visible_at(5, SwingKind.HIGH)
+    assert [s.formed_index for s in early] == [2]
+    assert store.visible_at(4, SwingKind.HIGH)[0].price == pytest.approx(1.0850)
+
+    late = store.visible_at(7, SwingKind.HIGH)
+    assert [s.formed_index for s in late] == [5]
+    assert not store.visible_at(3, SwingKind.HIGH)  # not confirmed until bar 4
+
+
+def test_visible_at_never_reveals_an_unconfirmed_swing(cfg, m15_quarter):
+    h4 = resample(m15_quarter, "H4", cfg)
+    store = detect_swings(h4, cfg)
+    for b in range(0, h4.n, 37):
+        for s in store.visible_at(b):
+            assert s.confirmed_index <= b
+
+
+def test_visible_at_is_a_superset_of_the_finished_store(cfg, m15_quarter):
+    """Direction matters: the live view can hold swings the finished store dropped, and
+    never the reverse.  A rule reading the finished store is therefore conservative
+    rather than lookahead -- which is why this went unnoticed until Phase 9."""
+    h4 = resample(m15_quarter, "H4", cfg)
+    store = detect_swings(h4, cfg)
+    for b in range(0, h4.n, 23):
+        live = {s.id for s in store.visible_at(b)}
+        final = {s.id for s in store.swings if s.confirmed_index <= b}
+        assert final <= live

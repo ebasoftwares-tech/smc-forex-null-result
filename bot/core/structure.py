@@ -37,6 +37,36 @@ from bot.core.indicators import atr_ref
 from bot.core.swings import Swing, SwingKind, SwingLabel, SwingStore, detect_at, swing_prices
 
 
+def penetration_threshold(atr_value: float, cfg: AppConfig) -> float:
+    """Break penetration threshold in price units (SPEC 6.3).
+
+    NaN during ATR warm-up means the threshold is unknown, so no break can be
+    asserted; a zero-configured penetration is still well defined, so warm-up only
+    matters when the ablation is switched on.
+    """
+    mult = cfg.structure.min_break_penetration_atr
+    if mult == 0.0:
+        return 0.0
+    return float(mult * atr_value) if np.isfinite(atr_value) else float("inf")
+
+
+def breaks_level(
+    series: BarSeries, i: int, level: float, *, up: bool, cfg: AppConfig, atr_value: float
+) -> bool:
+    """SPEC 6.3, as a pure function.
+
+    Module-level rather than a method because SPEC 11.2 requires the CHoCH reference
+    break to use *this* test and no other -- "by close, on H4" -- and two copies of the
+    same arithmetic in two modules is how that requirement quietly stops holding.
+    """
+    pen = penetration_threshold(atr_value, cfg)
+    if cfg.structure.break_confirmation == "close":
+        price = series.close[i]
+    else:
+        price = series.high[i] if up else series.low[i]
+    return bool(price > level + pen) if up else bool(price < level - pen)
+
+
 class Trend(str, Enum):
     BULLISH = "BULLISH"
     BEARISH = "BEARISH"
@@ -154,31 +184,21 @@ class StructureEngine:
     # ------------------------------------------------------------------- helpers
 
     def _pen(self, i: int) -> float:
-        """Break penetration threshold in price units, from ATR_ref(i).
-
-        NaN during ATR warm-up means the threshold is unknown; a zero-configured
-        penetration is still well defined, so warm-up only matters when the ablation
-        is switched on.
-        """
-        mult = self.cfg.structure.min_break_penetration_atr
-        if mult == 0.0:
-            return 0.0
-        a = self._atr[i]
-        return float(mult * a) if np.isfinite(a) else float("inf")
+        return penetration_threshold(self._atr[i], self.cfg)
 
     def _break_up(self, i: int, level: float, swing_id: str | None = None) -> bool:
         if swing_id is not None and swing_id in self._broken:
             return False
-        s = self.series
-        price = s.close[i] if self.cfg.structure.break_confirmation == "close" else s.high[i]
-        return bool(price > level + self._pen(i))
+        return breaks_level(
+            self.series, i, level, up=True, cfg=self.cfg, atr_value=self._atr[i]
+        )
 
     def _break_down(self, i: int, level: float, swing_id: str | None = None) -> bool:
         if swing_id is not None and swing_id in self._broken:
             return False
-        s = self.series
-        price = s.close[i] if self.cfg.structure.break_confirmation == "close" else s.low[i]
-        return bool(price < level - self._pen(i))
+        return breaks_level(
+            self.series, i, level, up=False, cfg=self.cfg, atr_value=self._atr[i]
+        )
 
     def _is_gap_break(self, i: int, level: float, up: bool) -> bool:
         """True when the bar opened beyond a level the previous bar closed short of."""

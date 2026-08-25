@@ -560,3 +560,170 @@ running the sweep tests, only by the full suite.
 
 Not a code defect, but a process note worth keeping: **run the whole suite after changing a
 shared dataclass**, not the module that motivated the change.
+
+---
+
+## D-009 — Two specification contradictions, and findings, from implementing Phase 9
+
+| | |
+|---|---|
+| **Date** | 2026-08-25 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 9 implementation (CHoCH reference selection, MSS confirmation, the funnel) |
+
+### 1. SPEC 11.5 and SPEC 11.6 disagree about what invalidation means
+
+11.5 lists "no new extreme below the sweep" and "no opposing confirmed sweep" as **clauses
+evaluated at the break bar `b`**, over the interval `(s, b]`. 11.6 lists the same two as things
+that **invalidate the setup** the moment they occur.
+
+The readings differ for a real population: a setup that makes a new extreme and *then* breaks
+its reference is, under 11.6, dead before the break and never recorded — and that is exactly
+the population SPEC 6.9 requires in order to measure whether the sweep-and-displacement
+requirement adds anything.
+
+**Resolution: both conditions are tracked as sticky flags over `(s, b]` and read as clauses at
+the break bar.** This satisfies 11.5 literally. They surface as *terminal outcomes* when no
+break ever comes, which satisfies 11.6. Nothing is discarded either way.
+
+On the fixture this keeps CHoCH events the strict-invalidation reading would have erased: the
+NEW_EXTREME and OPPOSING_SWEEP clauses fire on 179 and 351 of the 477 CHoCH-not-MSS events
+respectively (they overlap). Under the other reading, SPEC 6.9's marginal-value test would be
+run on a population selected to exclude its most informative cases.
+
+### 2. SPEC 6.6 carries a fourth MSS clause that SPEC 11.5 omits while calling itself complete
+
+6.6 requires that *"the swept level lies beyond the extreme of the leg that produced the
+CHoCH"*. 11.5 gives the MSS conditions under the heading **"MSS confirmation, complete"** and
+does not include it.
+
+**Resolution: 11.5 is operative** — it is the more specific section and the one claiming
+completeness. The 6.6 clause is evaluated anyway and reported as a diagnostic, so the cost of
+the other reading is a number rather than an argument: **3 of 38** major MSS events would
+additionally be rejected by it. Too small to change the gate, which is the useful part — the
+two readings agree on the decision Phase 9 exists to make, and the contradiction can be settled
+on real data without re-opening this phase.
+
+### 3. The WAIT and knowability are two different constraints, and only one was written down
+
+SPEC 11.5 measures the window from the sweep **extreme** bar `s`. But a sweep is not knowable
+until its **confirm** bar, up to `sweep.max_confirmation_bars` (3) later. Enforcing only
+`b − s ≥ choch.min_bars_after_sweep` would admit a break judged against a sweep that had not
+yet happened as far as any live engine was concerned.
+
+Both floors are now applied:
+
+    first_bar = max(s + choch.min_bars_after_sweep,
+                    confirm_bar + (0 if sweep.same_bar_choch_allowed else 1))
+
+This is a correction, not a preference, and it changes no registered value.
+
+### 4. `SwingStore` answered "which swings existed at bar i" with less than a live engine had
+
+SPEC 5.4 normalisation REPLACEs a swing when a more extreme same-kind swing confirms with no
+opposite swing between, and the superseded object is then absent from the store — **including
+from every earlier bar**. SPEC 11.1 selects the CHoCH reference from that set *as it stood at
+the sweep bar*, so reading the finished store makes a swing vanish retroactively from a moment
+at which it was live.
+
+`SwingStore.history` (a `SwingSpan` per swing, carrying the half-open bar range over which it
+was live) and `visible_at(bar, kind)` make the historical query exact. The direction of the
+error matters and is why it survived four phases: the finished store is a **subset** of the
+live view, so every rule reading it was conservative rather than lookahead.
+
+It is also nearly self-correcting, which is worth recording so nobody re-derives it: the move
+that supersedes a swing high has usually already *broken* it, and a broken level fails 11.1's
+"unbroken since it formed" test regardless. The residual case is a sweep occurring before the
+superseding swing forms — **4 of 2,323 fixture sweeps (0.17%)** select a different reference.
+
+**The mutation test found this, not review.** Substituting the finished store passed the entire
+suite; `test_a_reference_the_finished_store_no_longer_holds_is_still_selectable` now fails
+against it.
+
+### 5. Finding: the funnel converts 1.98% of sweeps into MSS — the number SPEC 11.7 named
+
+SPEC 11.7, written before any of this existed:
+
+> *"A funnel that converts 2% of sweeps into MSS will not produce a testable sample in five
+> years, and that is a design finding to surface in Phase 9, before the entry engine is built."*
+
+Measured, per cluster, right-censored candidates excluded: **1.98%**.
+
+Scaled to the in-sample period (4 years × 10 symbols, `BACKTEST_PROTOCOL.md` §2.1) that is
+**507 universe-wide and 152 on the development set** — clearing the gate's 300/120, but not
+comfortably, and on a projection rather than a measurement. The gate is therefore recorded as
+**PASS on projection, BLOCKED on measurement** until Q1/Q2 deliver real bars.
+
+### 6. Finding: `micro` reference mode produces almost no MSS, and it is a pre-registered null
+
+| Mode | MSS / symbol-year | Projected universe | Projected dev set |
+|---|---:|---:|---:|
+| `major` | 12.7 | 507 | 152 |
+| `micro` | 1.0 | 40 | 12 |
+
+Micro breaks the first pullback swing *after* the sweep, so its reference sits close to the
+sweep extreme and the move reaching it is small — and a small move rarely clears a 1.5-ATR
+displacement threshold. 709 of its 780 CHoCH events fail on displacement.
+
+SPEC 11.1 predicted the two failure modes as "the move is over before confirmation" (major) and
+"confirms on noise" (micro). What actually happens is that the displacement filter declines to
+call the noise a confirmation at all.
+
+**This is a null result on a pre-registered strategy variant, and is reported as one.**
+`BACKTEST_PROTOCOL.md` §10.2 forbids tuning micro until it passes.
+
+### 7. Finding: the TUNABLE window parameter is inert; the FROZEN floor binds
+
+`choch.max_bars_after_sweep` is one of only eight TUNABLE parameters, and SPEC 11.2 treats it
+as what makes this a multi-session model. Varying it over its registered range {4, 8, 12, 18,
+24} moves the MSS count from 36 to 38 and then not at all: every MSS lands within 7 bars, with
+the mass at **2** — the first admissible bar for most candidates.
+
+**The floor is doing the work the ceiling is credited with.** This is the second instance of
+the registered parameter classes not matching which parameter decides the outcome (D-008 §4 was
+the first, `min_body_ratio` over `min_leg_atr`). Both were measured on a random walk; both must
+be re-measured on real bars before the TUNABLE/ABLATION split is trusted.
+
+It also qualifies D-002's reading of the timescale: the window *permits* two trading days from
+sweep to MSS, but the observed median is **8 hours**. Multi-session by permission, same-day in
+practice — against noise, at least.
+
+### 8. Finding: an ABLATION parameter spans the gate verdict
+
+`choch.max_reference_distance_atr`, registered ABLATION {2.0, 3.0, 4.0}:
+
+| Value | MSS | Projected dev set | Gate |
+|---|---:|---:|---|
+| 2.0 | 14 | 56 | **FAIL** |
+| 3.0 (default) | 38 | 152 | PASS |
+| 4.0 | 42 | 168 | PASS |
+
+`REFERENCE_TOO_FAR` rejects 588 of 1,916 decided candidates — more than any single MSS clause.
+A parameter classified as a secondary question is one of the two largest terms in the funnel,
+and the gate verdict is not robust to moving it inside its own registered range.
+
+The default was fixed before the report ran and **stays fixed**; §10.2 forbids choosing it by
+looking at the outcome. What this licenses is knowing the PASS is conditional — not moving the
+parameter.
+
+### 9. Finding: `OPPOSING_SWEEP` is a density effect, not a self-inflicted one
+
+The clause fires on 351 of 515 major CHoCH events. The obvious suspicion — that the confirming
+leg sweeps liquidity on its own way up and so disqualifies itself — is wrong: only **6**
+opposing sweeps land on the break bar, and the rest spread evenly across the window.
+
+It is level density. With up to 40 active levels and ~0.5 confirmed sweeps per H4 bar on this
+fixture, a 12-bar window contains an opposing sweep more often than not. On real bars the sweep
+rate differs and so will this clause's cost, so it is a fixture property rather than a design
+finding — but it is the third-largest term in the funnel and needs re-measuring, not assuming.
+
+### 10. The funnel changes units in the middle
+
+Its first two stages count **levels**; the rest count **events**, and they are not nested — one
+level can trigger several sweep events over its life (a rejected poke, then a real one), so
+`sweeps_triggered` (3,859) legitimately exceeds `levels_swept_or_tested` (3,678).
+
+Presented as one descending chain the funnel shows a rise in the middle and invites a hunt for
+a bug that is not there. `LEVEL_STAGES` and `EVENT_STAGES` are kept separate, only the event
+chain is asserted monotone, and the join is reported as the fan-out it is. Caught by the gate
+report's own monotonicity check on its first run.

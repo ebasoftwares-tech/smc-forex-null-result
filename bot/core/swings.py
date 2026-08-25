@@ -61,6 +61,33 @@ class Swing:
 
 
 @dataclass(frozen=True)
+class SwingSpan:
+    """A swing plus the half-open bar range ``[visible_from, visible_until)`` over which
+    it was the live swing of its kind.
+
+    The store keeps only *surviving* swings: SPEC 5.4 normalisation REPLACEs a swing
+    when a more extreme same-kind swing confirms with no opposite swing between them,
+    and the superseded object is gone from ``swings`` afterwards.  Reading the finished
+    store to ask "which swings existed at bar i" therefore answers with **less** than a
+    live engine had -- a superseded swing vanishes retroactively from every earlier bar
+    too.
+
+    That is safe (it can never invent information) but it is not faithful, and SPEC 11.1
+    selects the CHoCH reference from exactly this set as it stood at the sweep bar.  The
+    spans make the historical query exact instead of merely conservative.
+    """
+
+    swing: Swing
+    visible_from: int
+    visible_until: int | None = None
+
+    def visible_at(self, bar_index: int) -> bool:
+        return self.visible_from <= bar_index and (
+            self.visible_until is None or bar_index < self.visible_until
+        )
+
+
+@dataclass(frozen=True)
 class SwingAmendment:
     """A revision to the swing *labelling*, never to an emitted signal.
 
@@ -129,6 +156,7 @@ class SwingStore:
         self.timeframe = timeframe
         self.swings: list[Swing] = []
         self.amendments: list[SwingAmendment] = []
+        self.history: list[SwingSpan] = []
 
     # ------------------------------------------------------------------ accessors
 
@@ -155,6 +183,25 @@ class SwingStore:
                 return s
         return None
 
+    def _close_span(self, swing_id: str, bar_index: int) -> None:
+        for k in range(len(self.history) - 1, -1, -1):
+            sp = self.history[k]
+            if sp.swing.id == swing_id and sp.visible_until is None:
+                self.history[k] = replace(sp, visible_until=bar_index)
+                return
+
+    def visible_at(self, bar_index: int, kind: SwingKind | None = None) -> list[Swing]:
+        """The swings a live engine held at the close of ``bar_index``, oldest first.
+
+        Confirmation is already implied -- a swing enters the store on the bar that
+        confirms it -- so no separate ``confirmed_index`` filter is needed here.
+        """
+        return [
+            sp.swing
+            for sp in self.history
+            if sp.visible_at(bar_index) and (kind is None or sp.swing.kind is kind)
+        ]
+
     def counts(self) -> dict[str, int]:
         return {
             "HIGH": sum(1 for s in self.swings if s.is_high),
@@ -168,6 +215,7 @@ class SwingStore:
         if last is None or last.kind is not s.kind:
             self.swings.append(s)
             self._relabel_last()
+            self.history.append(SwingSpan(self.swings[-1], bar_index))
             self.amendments.append(
                 SwingAmendment(at, bar_index, "APPEND", s.id, None, "alternating")
             )
@@ -177,6 +225,8 @@ class SwingStore:
         if more_extreme:
             self.swings[-1] = s
             self._relabel_last()
+            self._close_span(last.id, bar_index)
+            self.history.append(SwingSpan(self.swings[-1], bar_index))
             self.amendments.append(
                 SwingAmendment(at, bar_index, "REPLACE", s.id, last.id, "more extreme, same kind")
             )

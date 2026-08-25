@@ -799,6 +799,13 @@ them, because a system needs a name for "structure changed" and a different name
 > 3. **Reference validity** — the broken level is the CHoCH reference selected by §11.1, and
 >    it is within `choch.max_reference_distance_atr` of the sweep extreme.
 
+**Clause 1's second half — "the swept level lies beyond the extreme of the leg that
+produced the CHoCH" — is a diagnostic, not a condition** (decision D-009 §2). §11.5 states the
+MSS conditions under the heading *"MSS confirmation, complete"* and omits it; the two sections
+cannot both be right. 11.5 is operative, being the more specific and the one claiming
+completeness. The clause is evaluated and reported anyway, so the cost of the other reading is
+a number rather than an argument — 3 of 38 MSS events on the Phase 9 fixture.
+
 So `MSS ⊂ CHoCH`. **Only an MSS can produce a trade.** Both are logged as separate event
 types, and the backtest reports the population of CHoCH-that-were-not-MSS with their forward
 returns — that comparison is the direct measurement of whether the sweep-and-displacement
@@ -1528,6 +1535,14 @@ reference_mode = micro:
 
 Mirror for bearish (swing lows, `min(L…) ≥ SL.price`).
 
+**`confirmed_at ≤ close_time(s)` must be read against the swing set as it stood at bar `s`, not
+against the finished one** (D-009 §4). §5.4 normalisation removes a swing that a later, more
+extreme same-kind swing supersedes, and it removes it from every earlier bar too — so the
+finished store denies at `s` a swing that was live at `s`. The error is conservative rather
+than lookahead, and nearly self-cancelling (the move that supersedes a swing high has usually
+already broken it, which fails the unbroken test anyway), but it is real on 0.17% of fixture
+sweeps.
+
 The two modes are genuinely different strategies and **both MUST be tested**:
 
 | | `major` | `micro` |
@@ -1590,6 +1605,21 @@ choch.min_bars_after_sweep   default 1   (the "WAIT", FROZEN — see §9.6)
 forward return from the timeout point is recorded so "we waited too long / not long enough"
 is answerable from data.
 
+**Amended by D-009 §3: the WAIT is not the only lower bound.** It is measured from the sweep
+*extreme* bar `s`, but a sweep is not knowable until its *confirm* bar, up to
+`sweep.max_confirmation_bars` later. Enforcing the WAIT alone would admit a break judged
+against a sweep that had not yet happened as far as a live engine was concerned. Both bind:
+
+```
+first_bar = max(s + choch.min_bars_after_sweep,
+                confirm_bar + (0 if sweep.same_bar_choch_allowed else 1))
+```
+
+**Measured consequence (Phase 9): this floor, not the ceiling, is what binds.** Every MSS on
+the fixture lands within 7 bars of the sweep, with the mass at 2 — the first admissible bar for
+most candidates — so `max_bars_after_sweep` changes nothing above 8 despite being one of the
+eight TUNABLE parameters. See D-009 §7.
+
 ### 11.5 MSS confirmation, complete
 
 ```
@@ -1603,6 +1633,13 @@ MSS_CONFIRMED(bullish) at bar b ⟺
    ∧  no opposing SWEEP_CONFIRMED in (s, b]
    ∧  MTF gate passes at close_time(b)                               (§7.5)
 ```
+
+**Clauses 5 and 6 are evaluated as clauses here and listed as setup invalidations in §11.6;
+D-009 §1 reconciles the two.** Both are tracked as sticky flags over `(s, b]` and read at the
+break bar, which is this section literally, and both surface as terminal outcomes when no break
+ever comes, which is §11.6. The difference is not cosmetic: under a strict invalidation reading
+a setup that makes a new extreme and *then* breaks its reference is never recorded at all, and
+that is precisely the population §6.9's marginal-value test needs.
 
 The fifth clause is important and easy to omit: if price made a **new low** materially below
 the sweep extreme between the sweep and the break, the sweep failed — the level was accepted

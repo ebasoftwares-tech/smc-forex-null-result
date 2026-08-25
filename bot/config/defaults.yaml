@@ -140,6 +140,23 @@ disp:
   require_fvg: true
   min_range_atr: 1.5
 
+# SPEC 11.  `reference_mode` is not an ordinary parameter: major and micro are two
+# separately pre-registered STRATEGIES (11.1), and must be reported as such rather than
+# as a sweep.  The window below is what makes this a multi-session swing model -- 12 H4
+# bars is two trading days from sweep to MSS (D-002).
+choch:
+  reference_mode: major
+  max_reference_lookback: 30
+  max_reference_distance_atr: 3.0
+  max_bars_after_sweep: 12
+  # The WAIT (SPEC 9.6): measured from the sweep EXTREME, while knowability is measured
+  # from the sweep CONFIRM bar.  Both bind -- see D-009.
+  min_bars_after_sweep: 1
+  micro_fractal_n: 1
+
+invalidate:
+  new_extreme_atr: 0.10
+
 # SPEC 12.  Detection only in Phase 8; lifecycle fields are consumed from Phase 10.
 fvg:
   min_size_atr: 0.10

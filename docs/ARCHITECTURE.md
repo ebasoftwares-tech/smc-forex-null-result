@@ -119,6 +119,7 @@ bot/
     sweeps.py          §9 penetration + reclaim, clusters, failures            [Phase 7]
     displacement.py    §10 leg-based drive test, fixed origin              [Phase 8]
     fvg.py             §12.1 detection (lifecycle is Phase 10)            [Phase 8]
+    mss.py             §11 CHoCH reference selection, MSS confirmation    [Phase 9]
     order_blocks.py    §13
   strategy/
     setup.py           §14 Setup object
@@ -141,6 +142,7 @@ bot/
   research/            ← the falsification suite (BACKTEST_PROTOCOL §6)
     sweep_study.py     §9.7 forward-return study of sweeps (H2)               [Phase 7]
     displacement_study.py  §10.6 threshold distribution + rejection rates  [Phase 8]
+    funnel.py          §11.7 the sweep -> CHoCH -> MSS funnel and its gate  [Phase 9]
   reporting/
     charts.py          renders from events.jsonl only
     narrative.py       §21.4

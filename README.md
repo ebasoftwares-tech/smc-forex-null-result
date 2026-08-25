@@ -1,6 +1,12 @@
 # SMC Forex Bot — Specification Repository
 
-**Status: PHASES 1, 5, 6, 7 and 8 COMPLETE.** 227 tests green.
+**Status: PHASES 1, 5, 6, 7, 8 and 9 COMPLETE.** 275 tests green.
+
+Phase 9 was the project's decision point — the funnel that says whether the design
+produces a testable number of tradable events. It does, on the `major` reference mode
+and **on a projection**: 1.98% of sweeps become an MSS, which scales to 507 events
+across the in-sample universe against a gate of 300. The `micro` mode misses by an
+order of magnitude and is reported as a pre-registered null. See `docs/STATE.md` §3.
 
 | Phase | Scope | Gate report |
 |---|---|---|
@@ -9,15 +15,16 @@
 | 6 | Liquidity engine — sources, lifecycle, merge, rank | `reports/phase6_gate.md` (8/8; sweep-rate half deferred to Phase 7) |
 | 7 | Sweep detection + the forward-return study (H2) | `reports/phase7_gate.md` (7/7; closes Phase 6's deferred half) |
 | 8 | Displacement + FVG detection | `reports/phase8_gate.md` (8/8) |
+| 9 | CHoCH reference selection, MSS confirmation, the funnel | `reports/phase9_gate.md` (10/10; gate passes on projection, blocked on measurement) |
 
 Phase 5 was built before 2–4 deliberately: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
-mostly configuration. Phases 2–4 and 9–17 are not started.
+mostly configuration. Phases 2–4 and 10–17 are not started.
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/             # 227 tests
+.venv/Scripts/python.exe -m pytest tests/             # 275 tests
 .venv/Scripts/python.exe scripts/phase1_report.py     # Phase 1 gate report
-.venv/Scripts/python.exe scripts/phase8_report.py     # Phase 5 gate report
+.venv/Scripts/python.exe scripts/phase9_report.py     # Phase 9 gate report — the funnel
 .venv/Scripts/python.exe scripts/regen_golden.py      # only when a structure change is intended
 ```
 

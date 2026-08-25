@@ -127,6 +127,30 @@ sweep:
   # SPEC 9.6: the WAIT step is structural.  Consumed by Phase 9.
   same_bar_choch_allowed: false
 
+# SPEC 10.  Displacement is measured over a LEG ending at the structure-break bar:
+# a two-bar drive and a one-bar drive of the same magnitude are the same event.
+disp:
+  mode: leg
+  min_leg_atr: 1.5
+  min_body_ratio: 0.50
+  min_directional_bars: 1
+  max_leg_bars: 3
+  # SPEC 10.2: the FVG requirement is the same condition expressed structurally, not an
+  # extra filter -- and it produces the object entry model C needs.
+  require_fvg: true
+  min_range_atr: 1.5
+
+# SPEC 12.  Detection only in Phase 8; lifecycle fields are consumed from Phase 10.
+fvg:
+  min_size_atr: 0.10
+  min_size_pips: 0.5
+  exclude_weekend_gaps: true
+  mitigation_mode: ce
+  invalidate_buffer_atr: 0.0
+  max_age_bars: 30
+  merge_overlapping: false
+  selection: first
+
 eq:
   min_touches: 2
   tolerance_atr: 0.10

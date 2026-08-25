@@ -55,6 +55,7 @@ def mk_event(bar: int, side: Side, series, source=LevelSource.SESSION_LOW) -> Sw
         confirm_bar=bar,
         at=from_epoch_s(int(series.close_time[bar])),
         sweep_extreme=float(series.low[bar]),
+        sweep_extreme_bar=bar,
         penetration=0.0004,
         penetration_atr=0.2,
         wick_ratio=0.5,

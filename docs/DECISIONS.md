@@ -471,3 +471,92 @@ directions, and that an inverted edge reports negative rather than zero.
 
 **H2 is therefore neither supported nor refuted.** It cannot be, on synthetic data. Phase 7
 proves the instrument works; the measurement needs real bars (Q1/Q2).
+
+---
+
+## D-008 — Findings from implementing Phase 8
+
+| | |
+|---|---|
+| **Date** | 2026-08-25 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 8 implementation (displacement) and the threshold study |
+
+### 1. FVG detection was pulled forward from Phase 10
+
+`disp.require_fvg` defaults to **true** (SPEC 10.2), and FVG is nominally Phase 10. Shipping
+Phase 8 with the flag switched off would have made every rejection rate in its gate report
+describe a *different filter* than the one that actually runs.
+
+`bot/core/fvg.py` therefore implements SPEC 12.1 **detection only**. The 12.2 lifecycle —
+touch, PARTIAL, MITIGATED, INVALIDATED, EXPIRED — and the 12.3 selection rule remain Phase 10,
+whose gate is the standalone edge test. The full `FvgConfig` is declared now so Phase 10 adds
+code rather than changing `config_hash`.
+
+### 2. The `1.5` displacement threshold is arbitrary, and the report says so
+
+SPEC 10.6 asks the question directly: *"If the default 1.5 sits in the middle of a smooth
+unimodal distribution, it is an arbitrary cut and should be reported as such rather than
+defended."*
+
+Measured over 27,760 candidate legs: the `net/ATR` density **decays monotonically from zero**
+with no shoulder, gap or local minimum. 1.25 rejects 76%, 1.5 rejects 84%, 2.0 rejects 95% —
+a smooth progression with nothing distinguishing the middle value.
+
+**1.5 is a choice, not a discovery.** That is exactly why it is TUNABLE under a plateau
+requirement rather than FROZEN: the data cannot justify it, so out-of-sample stability must.
+
+### 3. The "natural break" detector fired on 0.6 sigma of Poisson noise
+
+Its first version reported STRUCTURED — because one histogram bin rose by **+11 counts against
+a standard deviation of 18**. A single bin-to-bin wobble was being reported as the data marking
+the threshold out.
+
+It now requires a rise exceeding **2× the Poisson noise** of the preceding bin, and the tests
+pin both directions: noise must not qualify, and a genuinely bimodal distribution must.
+
+This is the same failure mode as D-007 §5 one level up: a statistic that is not compared
+against what noise alone would produce is not a finding.
+
+### 4. Finding: `BODY_RATIO` binds harder than `NET_TOO_SMALL`
+
+Rejection rates over the fixture, counted independently:
+
+| Condition | Rejects |
+|---|---:|
+| `BODY_RATIO` | 90.5% |
+| `NET_TOO_SMALL` | 84.0% |
+| `NO_FVG` | 83.3% |
+| `DIRECTIONAL_BARS` | 14.1% |
+
+SPEC 10 gives `min_leg_atr` the TUNABLE slot; `min_body_ratio` is only ABLATION. On this
+fixture the body/range ratio is the binding constraint.
+
+**Do not act on this yet.** A random walk has no sustained directional drives, so body ratios
+are low *by construction*; real displacement legs should carry much higher ones and the ranking
+may invert. What it establishes is that the relative bindingness of the five conditions must be
+**re-measured on real bars before the TUNABLE/ABLATION split is trusted**.
+
+### 5. Finding: the FVG requirement's marginal cost shrinks as the net threshold tightens
+
+Joint ablation (SPEC 10.6), pass rate:
+
+| `min_leg_atr` | FVG off | FVG on | Cost |
+|---|---:|---:|---:|
+| 0.0 | 9.5% | 5.9% | −3.6 pts |
+| 1.5 | 8.0% | 5.4% | −2.6 pts |
+| 2.5 | 1.5% | 1.2% | −0.3 pts |
+
+This is direct support for SPEC 10.2's claim that the FVG requirement is *the same condition
+expressed structurally* rather than an extra filter: a leg large enough to clear a strict net
+threshold has usually already left a gap. They must be ablated **jointly** — testing them one
+at a time would credit each with the other's work.
+
+### 6. A required field on a frozen dataclass breaks callers silently until the full suite runs
+
+Adding `sweep_extreme_bar` to `SweepEvent` (Phase 9 needs it to place the displacement leg's
+origin) broke nine Phase 7 tests that construct the event by hand. They were not caught by
+running the sweep tests, only by the full suite.
+
+Not a code defect, but a process note worth keeping: **run the whole suite after changing a
+shared dataclass**, not the module that motivated the change.

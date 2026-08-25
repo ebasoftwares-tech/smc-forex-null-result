@@ -408,6 +408,67 @@ class SweepConfig(Frozen):
     )
 
 
+class FvgConfig(Frozen):
+    """SPEC 12.  Detection lands in Phase 8 (displacement needs it); the lifecycle
+    fields are declared here so Phase 10 adds code rather than changing ``config_hash``."""
+
+    min_size_atr: float = Field(
+        0.10, ge=0.0, description="ABLATION {0.05, 0.10, 0.20}. SPEC 12.1."
+    )
+    min_size_pips: float = Field(
+        0.5, ge=0.0, description="FROZEN. SPEC 12.1 -- a spread guard."
+    )
+    exclude_weekend_gaps: bool = Field(
+        True,
+        description=(
+            "FROZEN. SPEC 12.5. An unfillable price region is not an imbalance anyone "
+            "will trade back into."
+        ),
+    )
+    mitigation_mode: Literal["touch", "ce", "full"] = Field(
+        "ce", description="ABLATION. SPEC 12.2. [Phase 10]"
+    )
+    invalidate_buffer_atr: float = Field(0.0, ge=0.0, description="FROZEN. SPEC 12.2. [Phase 10]")
+    max_age_bars: int = Field(30, ge=1, description="FROZEN. SPEC 12.2. [Phase 10]")
+    merge_overlapping: bool = Field(False, description="ABLATION. SPEC 12.5. [Phase 10]")
+    selection: Literal["first", "largest", "nearest"] = Field(
+        "first", description="ABLATION. SPEC 12.3. [Phase 10]"
+    )
+
+
+class DisplacementConfig(Frozen):
+    """SPEC 10.  Evaluated over a LEG, not a single bar: a two-bar drive and a one-bar
+    drive of the same magnitude are the same event."""
+
+    mode: Literal["leg", "bar", "either"] = Field(
+        "leg", description="ABLATION. SPEC 10.3 -- `bar` is the classic formulation."
+    )
+    min_leg_atr: float = Field(
+        1.5,
+        ge=0.0,
+        description=(
+            "TUNABLE {0 (off), 1.0, 1.25, 1.5, 2.0, 2.5}. SPEC 10.1. Requires a PLATEAU, "
+            "not a peak (BACKTEST_PROTOCOL 5.5)."
+        ),
+    )
+    min_body_ratio: float = Field(
+        0.50, ge=0.0, le=1.0, description="ABLATION {0.4, 0.5, 0.6}. SPEC 10.1."
+    )
+    min_directional_bars: int = Field(1, ge=0, description="FROZEN. SPEC 10.1.")
+    max_leg_bars: int = Field(3, ge=1, description="ABLATION {2, 3, 5}. SPEC 10.1.")
+    require_fvg: bool = Field(
+        True,
+        description=(
+            "ABLATION. SPEC 10.2 -- not an extra condition layered on top but the same "
+            "condition expressed structurally, and it yields an object entry model C "
+            "can use. Partially redundant with min_leg_atr, so they ablate jointly."
+        ),
+    )
+    min_range_atr: float = Field(
+        1.5, ge=0.0, description="FROZEN. SPEC 10.3, `bar` mode only."
+    )
+
+
 class AppConfig(Frozen):
     """The fully resolved configuration.  Hashed to produce ``config_hash``."""
 
@@ -421,6 +482,8 @@ class AppConfig(Frozen):
     structure: StructureConfig = StructureConfig()
     liq: LiquidityConfig = LiquidityConfig()
     sweep: SweepConfig = SweepConfig()
+    disp: DisplacementConfig = DisplacementConfig()
+    fvg: FvgConfig = FvgConfig()
     eq: EqualLevelsConfig = EqualLevelsConfig()
     range: RangeConfig = RangeConfig()
 

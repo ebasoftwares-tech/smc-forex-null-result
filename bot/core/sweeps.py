@@ -95,6 +95,7 @@ class SweepEvent:
     confirm_bar: int
     at: datetime
     sweep_extreme: float
+    sweep_extreme_bar: int
     penetration: float
     penetration_atr: float
     wick_ratio: float
@@ -145,6 +146,11 @@ class _Window:
     level: LiquidityLevel
     trigger_bar: int
     extreme: float
+    # The BAR the extreme printed on, not just its price.  SPEC 10.1 clamps the
+    # displacement leg's origin to it, so without this Phase 8 would have to recover it
+    # by scanning for a matching price -- which is ambiguous the moment two bars in the
+    # window share a low.
+    extreme_bar: int
     atr: float
     trigger_wick_ratio: float
     range_high: float
@@ -273,6 +279,7 @@ class SweepEngine:
             confirm_bar=i,
             at=from_epoch_s(self.series.close_time[i]),
             sweep_extreme=w.extreme,
+            sweep_extreme_bar=w.extreme_bar,
             penetration=pen,
             penetration_atr=pen / w.atr if w.atr > 0 else 0.0,
             wick_ratio=w.trigger_wick_ratio,
@@ -331,7 +338,9 @@ class SweepEngine:
                 del self._windows[level_id]
                 continue
             w.level = lvl
-            w.extreme = min(w.extreme, l) if lvl.side is Side.SELL_SIDE else max(w.extreme, h)
+            new_extreme = min(w.extreme, l) if lvl.side is Side.SELL_SIDE else max(w.extreme, h)
+            if new_extreme != w.extreme:
+                w.extreme, w.extreme_bar = new_extreme, i
             w.range_high = max(w.range_high, h)
             w.range_low = min(w.range_low, l)
             self._step(level_id, w, i, c, a)
@@ -357,6 +366,7 @@ class SweepEngine:
                 level=lvl,
                 trigger_bar=i,
                 extreme=l if lvl.side is Side.SELL_SIDE else h,
+                extreme_bar=i,
                 atr=a,
                 trigger_wick_ratio=self._wick_ratio(i, lvl.side),
                 range_high=h,
@@ -435,7 +445,7 @@ class SweepEngine:
             gapped = prev_h < lvl.price and l > lvl.price
         if not gapped:
             return False
-        w = _Window(lvl, i, lvl.price, a, 0.0, h, l)
+        w = _Window(lvl, i, lvl.price, i, a, 0.0, h, l)
         self._emit(w, i, SweepEventType.FAILED, SweepReason.GAPPED_THROUGH)
         lvl.status = LevelStatus.INVALIDATED
         lvl.terminal_at = from_epoch_s(self.series.close_time[i])

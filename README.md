@@ -28,6 +28,9 @@ character") is here reduced to an arithmetic rule over OHLC bars, with a confirm
 time, a parameter set, an invalidation condition, and a test that proves the rule never
 uses information from the future.
 
+> **Picking this up in a new session? Start with [docs/STATE.md](docs/STATE.md)** — where
+> the project is, what is decided, what must not be re-derived, and what to do next.
+
 ## Read in this order
 
 | # | Document | What it settles |

@@ -1,0 +1,98 @@
+# Resolved defaults for the SMC bot.
+#
+# Every value here is traceable to a section of SMC_STRATEGY_SPECIFICATION_v1.0.md
+# and a class in PARAMETERS.md.  Changing a FROZEN default starts a new study and
+# requires a DECISIONS.md entry (PARAMETERS.md section 5).
+#
+# Phase 1 scope: data, tf, week, session, atr.
+
+symbols:
+  # Development set first (BACKTEST_PROTOCOL.md section 2.1), then the validation set.
+  - EURUSD
+  - GBPUSD
+  - USDJPY
+  - AUDUSD
+  - USDCAD
+  - USDCHF
+  - NZDUSD
+  - EURJPY
+  - GBPJPY
+  - EURGBP
+
+data:
+  ingest_timeframe: M1
+  max_gap_bars: 3
+  spike_filter_atr: 10.0
+
+tf:
+  # DECISION D-001 (2026-08-25): UTC, not America/New_York.
+  # The H4 grid is therefore fixed at 00/04/08/12/16/20 UTC year-round.
+  day_boundary_tz: UTC
+  day_boundary_time: "00:00"
+  # DECISION D-001a: the Sunday 21:00-24:00 UTC stub would otherwise become
+  # Monday's PDH/PDL.  SPEC 2.6.1.
+  sunday_handling: merge_into_monday
+  stub_merge_threshold: 0.25
+  min_bar_coverage_warn: 0.50
+
+week:
+  open_day: Sun
+  open_time: "21:00"
+  close_day: Fri
+  close_time: "21:00"
+  anchor_tolerance_hours: 1.0
+
+atr:
+  period: 14
+
+session:
+  source_tf: M15
+  min_bar_coverage: 0.60
+  windows:
+    - name: ASIA
+      tz: Asia/Tokyo
+      start: "09:00"
+      end: "18:00"
+      days: [Mon, Tue, Wed, Thu, Fri]
+      role: liquidity
+
+    - name: LONDON
+      tz: Europe/London
+      start: "08:00"
+      end: "16:30"
+      days: [Mon, Tue, Wed, Thu, Fri]
+      role: liquidity+execution
+
+    - name: NEW_YORK
+      tz: America/New_York
+      start: "08:00"
+      end: "17:00"
+      days: [Mon, Tue, Wed, Thu, Fri]
+      role: liquidity+execution
+
+    # The ICT-convention "Asian range".  Deliberately distinct from ASIA above;
+    # the two definitions disagree and the disagreement is measurable (SPEC 3.2).
+    # Under D-001 this window now ends INSIDE the UTC trading day rather than on
+    # its boundary - see the note in SPEC 3.2.
+    - name: ASIA_RANGE
+      tz: America/New_York
+      start: "20:00"
+      end: "00:00"
+      days: [Sun, Mon, Tue, Wed, Thu]
+      role: liquidity
+
+    - name: LONDON_KZ
+      tz: America/New_York
+      start: "02:00"
+      end: "05:00"
+      days: [Mon, Tue, Wed, Thu, Fri]
+      role: killzone
+      enabled: false
+
+    - name: NY_KZ
+      tz: America/New_York
+      start: "07:00"
+      end: "10:00"
+      days: [Mon, Tue, Wed, Thu, Fri]
+      role: killzone
+      enabled: false

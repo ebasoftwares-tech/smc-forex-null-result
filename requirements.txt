@@ -1,0 +1,18 @@
+# Runtime + research dependencies, pinned.  SPEC 25.5: a result is identified by
+# (config_hash, dataset_hash, code_commit), and that identity is meaningless if the
+# libraries underneath move.
+
+numpy==2.5.2
+pyarrow==25.0.1
+pydantic==2.13.4
+PyYAML==6.0.3
+
+# tzdata is a HARD dependency, not a convenience.  Windows ships no system IANA
+# database, so `zoneinfo.ZoneInfo("America/New_York")` raises without it -- and every
+# session boundary in this system is tz-anchored (SPEC 3.1).  Its version also decides
+# historical DST transitions, so it is recorded in the dataset manifest.
+tzdata==2026.3
+
+# Test-only.
+pytest==9.1.1
+hypothesis==6.165.10

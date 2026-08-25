@@ -1,0 +1,10 @@
+.venv/
+data/raw/*
+data/parquet/*
+!data/**/.gitkeep
+reports/*
+__pycache__/
+*.pyc
+.pytest_cache/
+runs/
+*.jsonl

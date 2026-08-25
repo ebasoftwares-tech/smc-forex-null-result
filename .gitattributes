@@ -1,0 +1,21 @@
+# Normalise text; declare binaries explicitly.
+#
+# git decides "binary" by looking for a NUL byte in roughly the first 8KB.  Any format
+# whose header is plain ASCII can be misdetected as text, and with core.autocrlf=true
+# (the normal Windows setup here) every LF in it is then expanded to CRLF on clone --
+# silently corrupting the file.  Declaring the extension is the only reliable fix, so a
+# new binary artifact type gets an entry here BEFORE it is first committed.
+#
+# Verify a new type with a throwaway `git clone . <tmp>` and by LOADING the cloned file
+# the way the code loads it -- not by comparing sizes, and not by opening it in a viewer.
+
+* text=auto
+
+*.parquet binary
+*.zst     binary
+*.pdf     binary
+*.png     binary
+*.jpg     binary
+*.ico     binary
+*.zip     binary
+*.pem     binary

@@ -1,0 +1,14 @@
+[project]
+name = "smc-bot"
+version = "0.1.0"
+description = "Systematic SMC Forex research and execution system"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

@@ -99,9 +99,11 @@ Classification key: **F** = FROZEN, **A** = ABLATION, **T** = TUNABLE.
 | Parameter | Default | Class | Notes |
 |---|---|---|---|
 | `structure.break_confirmation` | close | F | `wick` available for ablation, expected to be much worse |
-| `break.min_penetration_atr` | 0.00 | **A** | {0, 0.05, 0.10, 0.15} |
+| `structure.min_break_penetration_atr` | 0.00 | **A** | {0, 0.05, 0.10, 0.15}. Registered in v1.0 as `break.min_penetration_atr`; renamed because `break` is a Python keyword and cannot be a config group |
 | `structure.on_wick_below_protected` | keep | F | `reset` destroys the CHoCH signal |
 | `structure.min_bars_between_flips` | 2 | F | Whipsaw guard |
+| `structure.protected_on_bos` | most_recent_low | **A** | **D-005.** `ratchet_only` is the alternative. Resolves the SPEC 6.4 / 6.9 contradiction; changes how far price must travel to produce a CHoCH |
+| `swing.min_history` | 36/104/250/500/1000/2000 | F | SPEC 5.3. Reported, not enforced |
 
 ### 3.5 Bias (§7)
 

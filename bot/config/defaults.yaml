@@ -45,6 +45,36 @@ week:
 atr:
   period: 14
 
+# SPEC 5.  N decreases with timeframe height because higher timeframes have fewer
+# bars, not because they are less noisy.  Monthly N=1 is forced by data availability
+# and its consequence -- low-resolution, slow monthly structure -- is accepted and
+# flagged in SPEC 7.7 rather than engineered around.
+swing:
+  fractal_n:
+    MN1: 1
+    W1: 1
+    D1: 2
+    H4: 2
+    H1: 3
+    M15: 5
+  tie_rule: leftmost
+  price_source: wick
+  min_history:
+    MN1: 36
+    W1: 104
+    D1: 250
+    H4: 500
+    H1: 1000
+    M15: 2000
+
+# SPEC 6.
+structure:
+  break_confirmation: close
+  min_break_penetration_atr: 0.0
+  on_wick_below_protected: keep
+  min_bars_between_flips: 2
+  protected_on_bos: most_recent_low
+
 session:
   source_tf: M15
   min_bar_coverage: 0.60

@@ -165,6 +165,84 @@ class AtrConfig(Frozen):
     period: int = Field(14, ge=2, description="FROZEN. SPEC 1.6 Wilder ATR.")
 
 
+class SwingConfig(Frozen):
+    """SPEC 5.  Fractal half-width per timeframe, plus the two tie-break rules."""
+
+    fractal_n: dict[str, int] = Field(
+        default_factory=lambda: {"MN1": 1, "W1": 1, "D1": 2, "H4": 2, "H1": 3, "M15": 5},
+        description="ABLATION (H4 only: 1-4). SPEC 5.3. Confirmation lag is N bars.",
+    )
+    tie_rule: Literal["leftmost", "rightmost"] = Field(
+        "leftmost",
+        description="FROZEN. SPEC 5.1 - which bar of an equal-price plateau is the swing.",
+    )
+    price_source: Literal["wick", "body"] = Field(
+        "wick", description="ABLATION. SPEC 5.1 - structure read on wicks or on closes."
+    )
+    min_history: dict[str, int] = Field(
+        default_factory=lambda: {"MN1": 36, "W1": 104, "D1": 250, "H4": 500, "H1": 1000, "M15": 2000},
+        description="FROZEN. SPEC 5.3 - bars required before a timeframe's structure is usable.",
+    )
+
+    @field_validator("fractal_n", "min_history")
+    @classmethod
+    def _positive(cls, v: dict[str, int]) -> dict[str, int]:
+        bad = {k: n for k, n in v.items() if n < 1}
+        if bad:
+            raise ValueError(f"fractal/history values must be >= 1: {bad}")
+        return v
+
+    def n_for(self, timeframe: str) -> int:
+        if timeframe not in self.fractal_n:
+            raise ValueError(f"no fractal_n configured for {timeframe!r}")
+        return self.fractal_n[timeframe]
+
+
+class StructureConfig(Frozen):
+    """SPEC 6.  Break confirmation and the protected-swing rules."""
+
+    break_confirmation: Literal["close", "wick"] = Field(
+        "close",
+        description=(
+            "FROZEN. SPEC 6.3. 'wick' is available for ablation and is expected to be much "
+            "worse: a wick break of a level is exactly what a liquidity sweep of it looks "
+            "like, so accepting one makes the system trade the pattern it exists to fade."
+        ),
+    )
+    min_break_penetration_atr: float = Field(
+        0.0,
+        ge=0.0,
+        description=(
+            "ABLATION {0, 0.05, 0.10, 0.15}. SPEC 6.3. Registered in PARAMETERS.md as "
+            "`break.min_penetration_atr`; renamed here because `break` is a Python keyword "
+            "and cannot be a config group."
+        ),
+    )
+    on_wick_below_protected: Literal["keep", "reset"] = Field(
+        "keep",
+        description=(
+            "FROZEN. SPEC 6.4. 'reset' would move the protected level down on every wick "
+            "and destroy the CHoCH signal."
+        ),
+    )
+    min_bars_between_flips: int = Field(
+        2, ge=1, description="FROZEN. SPEC 6.8 whipsaw guard."
+    )
+    protected_on_bos: Literal["most_recent_low", "ratchet_only"] = Field(
+        "most_recent_low",
+        description=(
+            "ABLATION. Resolves a contradiction inside SPEC 6 (see D-005). 6.4 says the "
+            "protected level is reset to the most recent confirmed opposite swing when a "
+            "BOS fires; 6.9 asserts it is monotonically non-decreasing within a bullish "
+            "trend. After a liquidity grab prints a lower low, those disagree. "
+            "'most_recent_low' follows 6.4 and standard SMC practice -- the origin of the "
+            "leg that broke structure becomes the new invalidation point. 'ratchet_only' "
+            "follows 6.9 and never lets the level move away from price. The choice changes "
+            "how far price must travel to produce a CHoCH, and therefore the setup count."
+        ),
+    )
+
+
 class AppConfig(Frozen):
     """The fully resolved configuration.  Hashed to produce ``config_hash``."""
 
@@ -174,6 +252,8 @@ class AppConfig(Frozen):
     week: WeekConfig = WeekConfig()
     session: SessionConfig
     atr: AtrConfig = AtrConfig()
+    swing: SwingConfig = SwingConfig()
+    structure: StructureConfig = StructureConfig()
 
     @field_validator("symbols")
     @classmethod

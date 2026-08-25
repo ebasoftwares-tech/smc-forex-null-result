@@ -12,6 +12,7 @@ without real broker data and is reported as BLOCKED rather than quietly skipped.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -34,13 +35,20 @@ OUT = Path("reports/phase1_gate.md")
 
 def _run_tests() -> tuple[bool, str]:
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/", "-q"],
+        # -q is already in pyproject addopts; passing it again makes -qq, which
+        # suppresses the very summary line this function parses.
+        [sys.executable, "-m", "pytest", "tests/"],
         capture_output=True,
         text=True,
         cwd=Path(__file__).resolve().parents[1],
     )
-    tail = [ln for ln in proc.stdout.strip().splitlines() if ln.strip()][-1:]
-    return proc.returncode == 0, (tail[0] if tail else "no output")
+    # pytest -q ends with a progress line; the summary is the line naming passed/failed.
+    summary = [
+        ln.strip()
+        for ln in proc.stdout.splitlines()
+        if re.search(r"\d+ (passed|failed|error)", ln)
+    ]
+    return proc.returncode == 0, (summary[-1] if summary else "no summary line")
 
 
 def main() -> int:

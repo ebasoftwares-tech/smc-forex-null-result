@@ -1,12 +1,21 @@
 # SMC Forex Bot — Specification Repository
 
-**Status: PHASE 1 COMPLETE** (data + timezone/session engine). 81 tests green; gate report at
-`reports/phase1_gate.md`. All 17 open questions were answered on 2026-08-25 (see
-`docs/DECISIONS.md`). Phases 2–17 are not started.
+**Status: PHASES 1 and 5 COMPLETE.** 126 tests green.
+
+| Phase | Scope | Gate report |
+|---|---|---|
+| 1 | Data, UTC timeframe construction, session engine | `reports/phase1_gate.md` (11/11; broker reconciliation blocked on Q1/Q2) |
+| 5 | H4 swings + market structure (BOS / CHoCH) | `reports/phase5_gate.md` (7/7) |
+
+Phase 5 was built before 2–4 deliberately: Monthly/Weekly/Daily analysis is the *same*
+engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
+mostly configuration. Phases 2–4 and 6–17 are not started.
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/ -q          # 81 tests
-.venv/Scripts/python.exe scripts/phase1_report.py     # regenerate the gate report
+.venv/Scripts/python.exe -m pytest tests/             # 126 tests
+.venv/Scripts/python.exe scripts/phase1_report.py     # Phase 1 gate report
+.venv/Scripts/python.exe scripts/phase5_report.py     # Phase 5 gate report
+.venv/Scripts/python.exe scripts/regen_golden.py      # only when a structure change is intended
 ```
 
 This repository currently contains one thing: a complete, deterministic, backtestable

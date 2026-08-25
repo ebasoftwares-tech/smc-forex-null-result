@@ -227,3 +227,82 @@ its theoretical seventh H4 bucket on real FX data: there is no price action in t
 would fill it. The practical impact of the NY-anchor ablation's irregular days is confined to
 the Sunday-open stub, which SPEC 2.6.1 already handles. This makes the D-001 ablation cheaper
 to run than expected.
+
+---
+
+## D-005 — Corrections and one unresolved contradiction, found implementing Phase 5
+
+| | |
+|---|---|
+| **Date** | 2026-08-25 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 5 implementation (swings + structure) and its test suite |
+
+### 1. SPEC 6.4 and SPEC 6.9 contradict each other — now an explicit ablation
+
+SPEC 6.4 says that when a BOS fires, `protected_low` "is updated to **the most recent
+swing low confirmed at or before bar `i`**, and thereafter **ratchets upward only**".
+SPEC 6.9 lists as an invariant that "`protected_low` is monotonically non-decreasing
+within a bullish trend".
+
+**These cannot both hold.** After an `INTERNAL_LIQUIDITY_GRAB` prints a swing low
+*below* the protected low, the next BOS resets the protected level down to it under
+6.4, and violates 6.9. The test asserting 6.9's invariant failed on real bar counts at
+the first run, which is how this surfaced.
+
+Resolved as `structure.protected_on_bos`, an **ABLATION** rather than a silent choice,
+because it changes how far price must travel to produce a CHoCH and therefore the setup
+count:
+
+| Value | Behaviour |
+|---|---|
+| `most_recent_low` (**default**) | Follows 6.4 and standard SMC practice: the origin of the leg that broke structure becomes the new invalidation point |
+| `ratchet_only` | Follows 6.9: the level may only ever move toward price |
+
+SPEC 6.9's invariant is restated as "non-decreasing **between BOS events**", which is
+what the default actually promises.
+
+### 2. A break is an event, not a state — one BOS per level
+
+SPEC 6.4 defines a BOS as `break_up(i, last_swing_high.price)`. Read literally, every
+bar that closes beyond an already-broken level emits another BOS, because
+`last_swing_high` does not change until the next swing confirms N bars later. On the
+first run this produced **274 BOS events where 49 were real** — a single sustained move
+firing on every bar.
+
+A swing is now consumed when it is broken, and `INTERNAL_LIQUIDITY_GRAB` likewise fires
+once per protected level. This matches the principle SPEC 8.9 already states for
+liquidity ("a level's status is SWEPT only once") and is now applied to structure too.
+
+### 3. Confirmation lag is N *bars*, not N x the bar duration
+
+SPEC 5.2 wrote `confirmation_lag = N × D(TF)` unqualified. A swing formed on the last
+H4 bar of Friday confirms on Monday: still exactly two bars, 52 hours of wall clock.
+Clarified in the spec, because **every timeout measured "in bars" inherits this** —
+`choch.max_bars_after_sweep = 12` is two trading days mid-week and four days over a
+weekend.
+
+### 4. Object ids are deterministic, not ULIDs
+
+SPEC 1.7 specifies ULIDs. A ULID embeds wall-clock time, so a ULID-keyed event log
+cannot be byte-identical across two runs of the same data — which SPEC 25.5 requires
+and `test_golden_is_reproducible_within_a_run` checks. Ids are derived from
+`(symbol, timeframe, kind, formed_index)` instead: deterministic, unique, and readable
+in a log.
+
+### Also established, not a defect
+
+**SPEC 6.2's label-based trend initialisation is nearly unreachable.** It requires the
+last high to be labelled HH and the last low HL simultaneously; in practice the first
+structural break resolves `UNDEFINED` first. Measured across twelve fixture years:
+label-based initialisation fired **2 times**, the first-break path **10 times**, and
+in every case the trend was defined within the first 20 bars.
+
+This is not worth fixing. Both paths define the trend early and the choice affects at
+most the first event of a dataset — a warm-up artefact, not a strategy behaviour. It is
+recorded so that nobody later mistakes the rule's rarity for a bug.
+
+**MSS is deliberately absent from Phase 5.** SPEC 6.6 defines it as a CHoCH plus sweep
+context plus displacement, and neither exists until Phases 7 and 8. The structure engine
+emits the unfiltered superset, which is exactly what makes the marginal value of those
+filters measurable later (SPEC 6.9, `BACKTEST_PROTOCOL.md` §6.2).

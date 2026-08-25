@@ -561,8 +561,16 @@ different structure and the difference is measurable.
 formed_index  = i
 confirmed_index = i + N
 confirmed_at  = close_time(bar i+N)
-confirmation_lag = N × D(TF)
+confirmation_lag = N bars
 ```
+
+**The lag is N *bars*, which equals `N × D(TF)` in trading time but not in wall-clock
+time.** A swing formed on the last H4 bar of Friday confirms on Monday — still exactly
+two bars, but 52 hours later. This follows from §1.5 (index arithmetic is over existing
+bars, and a weekend is absent bars rather than empty ones), and it is stated here
+because every downstream timeout measured "in bars" inherits the same property:
+`choch.max_bars_after_sweep = 12` is two trading days mid-week and four days over a
+weekend. *(Clarified during Phase 5 implementation; v1.0 wrote `N × D(TF)` unqualified.)*
 
 **MUST:** no engine may reference a swing before `confirmed_at`. `swings_as_of(T)` returns
 exactly `{ s : s.confirmed_at ≤ T }`.
@@ -730,6 +738,13 @@ bearish.
   and thereafter **ratchets upward only**: it is replaced whenever a later confirmed swing low
   is *higher*, never when lower. Mirror for `protected_high` in a bearish trend.
 
+  **The reset at the BOS itself may move the level *down*** — if an `INTERNAL_LIQUIDITY_GRAB`
+  printed a swing low below the protected low, that grab low is the most recent confirmed low
+  and becomes the new invalidation point. This is standard SMC (the origin of the leg that
+  broke structure is what invalidates it) and it is why §6.9's invariant is stated *between*
+  BOS events rather than absolutely. The alternative — never letting the level move away from
+  price — is `structure.protected_on_bos = ratchet_only`, a required ablation. See D-005.
+
 The ratchet is what makes CHoCH meaningful. Without it, a deep pullback that prints a lower
 swing low would quietly move the protected level down and the reversal signal would never
 fire. With it, a **wick below the protected low that does not close below it** leaves the
@@ -818,8 +833,12 @@ Trend `BULLISH`, `protected_low = SL₂ @ 1.0865`.
 
 - **Golden file** of BOS/CHoCH events over the fixture series.
 - **Invariant tests:** trend never flips without a CHoCH; `protected_low` is monotonically
-  non-decreasing within a bullish trend; every MSS has a parent CHoCH and a parent sweep in
-  `source_ids`.
+  non-decreasing **between BOS events** within a bullish trend (see §6.4 and D-005 — v1.0
+  stated this without the exception, which contradicted §6.4); every MSS has a parent CHoCH
+  and a parent sweep in `source_ids`.
+- **One break per level.** A swing is consumed when broken. Without this a single sustained
+  move emits a BOS on every bar until the next swing confirms N bars later — measured at 274
+  events where 49 were real. Same principle as §8.9 for liquidity.
 - **Marginal-value measurement:** forward return distributions at +1/+4/+12 bars for (a) all
   CHoCH, (b) MSS only, (c) CHoCH-not-MSS. If (b) and (c) are statistically indistinguishable,
   the sweep-plus-displacement requirement adds nothing and that is a headline finding, not a

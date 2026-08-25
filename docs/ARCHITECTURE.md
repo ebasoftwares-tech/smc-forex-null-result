@@ -116,7 +116,7 @@ bot/
     structure.py       §6 trend state, BOS / CHoCH, protected swings           [Phase 5]
     bias.py            §7
     liquidity.py       §8 level sources, lifecycle, merge, rank                [Phase 6]
-    sweeps.py          §9
+    sweeps.py          §9 penetration + reclaim, clusters, failures            [Phase 7]
     displacement.py    §10
     fvg.py             §12
     order_blocks.py    §13
@@ -138,6 +138,8 @@ bot/
     engine.py          bar loop, exactly the §4 ordering of STATE_MACHINE.md
     costs.py           spread / commission / swap / slippage models
     metrics.py, walkforward.py, montecarlo.py, ablation.py
+  research/            ← the falsification suite (BACKTEST_PROTOCOL §6)
+    sweep_study.py     §9.7 forward-return study of sweeps (H2)               [Phase 7]
   reporting/
     charts.py          renders from events.jsonl only
     narrative.py       §21.4

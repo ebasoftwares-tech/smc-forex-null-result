@@ -342,6 +342,72 @@ class LiquidityConfig(Frozen):
     )
 
 
+class SweepConfig(Frozen):
+    """SPEC 9 -- liquidity sweep detection.
+
+    Note the interaction SPEC 9.2 warns about: ``min_wick_ratio``,
+    ``min_close_position`` and ``max_confirmation_bars`` are near-substitutes.  With
+    ``max_confirmation_bars = 1`` the wick ratio is nearly implied.  Testing them one at
+    a time will produce three "significant" parameters that are one effect.
+    """
+
+    max_confirmation_bars: int = Field(
+        3,
+        ge=1,
+        le=5,
+        description=(
+            "TUNABLE {1, 2, 3, 5}. SPEC 9.2. 1 = a pure single-bar rejection wick; "
+            "larger allows a two-bar poke-and-reclaim."
+        ),
+    )
+    min_penetration_atr: float = Field(
+        0.05,
+        ge=0.0,
+        description=(
+            "FROZEN. SPEC 9.2. Excludes a sub-pip nick, which is usually a spread "
+            "artefact rather than a stop run."
+        ),
+    )
+    max_penetration_atr: float = Field(
+        1.00,
+        gt=0.0,
+        description=(
+            "TUNABLE {0.5, 0.75, 1.0, 1.5, 2.0}. SPEC 9.2. Above this the move is a "
+            "breakout, not a sweep. This is the parameter that separates the two "
+            "regimes and the one most likely to matter."
+        ),
+    )
+    reclaim_buffer_atr: float = Field(
+        0.0, ge=0.0, description="ABLATION {0, 0.05, 0.10}. SPEC 9.2."
+    )
+    min_wick_ratio: float = Field(
+        0.0,
+        ge=0.0,
+        le=1.0,
+        description='ABLATION {0, 0.3, 0.5}. SPEC 9.2, classic "long wick rejection".',
+    )
+    min_close_position: float = Field(
+        0.0, ge=0.0, le=1.0, description="ABLATION {0, 0.5, 0.66}. SPEC 9.2."
+    )
+    require_prior_level_age_bars: int = Field(
+        3,
+        ge=0,
+        description=(
+            "FROZEN. SPEC 9.2.1 -- applies to SWING-DERIVED sources only, measured in "
+            "bars of the timeframe the swing was detected on. Applying it to session "
+            "levels made the flagship setup unreachable (D-002a)."
+        ),
+    )
+    same_bar_choch_allowed: bool = Field(
+        False,
+        description=(
+            "FROZEN. SPEC 9.6. The WAIT step is structural, not advisory: a bar that "
+            "sweeps may not also confirm the CHoCH. Consumed by Phase 9; declared here "
+            "because the registry name is `sweep.same_bar_choch_allowed`."
+        ),
+    )
+
+
 class AppConfig(Frozen):
     """The fully resolved configuration.  Hashed to produce ``config_hash``."""
 
@@ -354,6 +420,7 @@ class AppConfig(Frozen):
     swing: SwingConfig = SwingConfig()
     structure: StructureConfig = StructureConfig()
     liq: LiquidityConfig = LiquidityConfig()
+    sweep: SweepConfig = SweepConfig()
     eq: EqualLevelsConfig = EqualLevelsConfig()
     range: RangeConfig = RangeConfig()
 

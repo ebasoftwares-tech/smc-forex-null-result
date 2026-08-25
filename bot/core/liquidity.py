@@ -159,6 +159,10 @@ class LiquidityLevel:
     status: LevelStatus = LevelStatus.ACTIVE
     source_ids: list[str] = field(default_factory=list)
     swept_by: str | None = None
+    # Set when this level is absorbed by another (SPEC 8.8).  The sweep engine follows
+    # the chain so that an open sweep window survives its level being merged away --
+    # with ~65% of levels merging, dropping those windows would lose real sweeps.
+    merged_into: str | None = None
     formed_in_gap: bool = False
     formed_in_data_suspect: bool = False
     # Bookkeeping, filled by the engine as bars close.
@@ -665,6 +669,7 @@ class LiquidityEngine:
                     winner.strength += loser.strength
                     winner.source_ids = list(dict.fromkeys(winner.source_ids + loser.source_ids))
                     winner.tier = min(winner.tier, loser.tier)
+                    loser.merged_into = winner.id
                     self._terminate(loser, LevelStatus.MERGED, i, at)
                     self.book.merged += 1
                     changed = True

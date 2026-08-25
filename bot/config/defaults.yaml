@@ -111,6 +111,22 @@ liq:
     "2": H4
     "3": H4
 
+# SPEC 9.  A sweep is penetration THEN reclaim, both bounded in size and time.
+# Failure to reclaim is not "no event": it invalidates the level and is logged, because
+# the ratio of confirmed to failed sweeps per source is a direct measure of whether a
+# level is a real barrier.
+sweep:
+  max_confirmation_bars: 3
+  min_penetration_atr: 0.05
+  max_penetration_atr: 1.00
+  reclaim_buffer_atr: 0.0
+  min_wick_ratio: 0.0
+  min_close_position: 0.0
+  # SPEC 9.2.1: swing-derived sources only.
+  require_prior_level_age_bars: 3
+  # SPEC 9.6: the WAIT step is structural.  Consumed by Phase 9.
+  same_bar_choch_allowed: false
+
 eq:
   min_touches: 2
   tolerance_atr: 0.10

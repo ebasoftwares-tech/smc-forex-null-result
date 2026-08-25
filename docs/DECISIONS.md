@@ -397,3 +397,77 @@ report must break down by source; this is not a defect to fix but a shape to car
 cap are dropped and never return) but are absent from the 8.7 lifecycle list. Recorded as
 distinct statuses rather than deletions so the population report can account for every level
 ever created.
+
+---
+
+## D-007 — Corrections and findings, from implementing Phase 7
+
+| | |
+|---|---|
+| **Date** | 2026-08-25 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 7 implementation (sweep detection) and the forward-return study |
+
+### 1. `GAPPED_THROUGH` must be tested before penetration depth
+
+A bar that opens beyond a level and never traded at it satisfies `low < price` — so the
+naive ordering classified it by penetration depth and reported `OVER_PENETRATION`, i.e. a
+breakout. It is neither: there was no opportunity to sweep. The gap test now runs **before**
+the penetration branch (SPEC 9.6).
+
+The rule is aggressive by design — any bar entirely beyond a level whose predecessor was
+entirely on the other side. In practice on H4 that is almost always the Sunday open, which is
+the case the ruling exists for.
+
+### 2. A negative wick ratio could silently reject a valid sweep
+
+`wick_ratio` is `(min(open, close) − low) / range`. On a malformed bar (close outside
+`[low, high]`) that is negative, and `negative < 0.0` is **true**, so the filter rejected the
+sweep *even with the filter switched off at its 0.0 default*. Now clamped to `[0, 1]`, so a
+filter that is off behaves as if it is off. Rejecting malformed bars remains the ingest
+layer's job (SPEC 1.5, `quality.analyse`); this is only a guard against a switched-off filter
+having an effect.
+
+Found because a hand-built test fixture had `close` below `low`. Worth noting how it
+presented: not as an error, but as one missing sweep among hundreds.
+
+### 3. Sweep windows must survive their level being merged away
+
+With ~65% of levels merging (D-006), a window keyed on a level that is absorbed mid-sweep
+would be dropped, and the surviving level — at a near-identical price — would open a fresh
+window with a new trigger bar, losing the original trigger and the running extreme.
+`LiquidityLevel.merged_into` now records the survivor and the sweep engine follows the chain.
+
+### 4. Finding: level and event ids are unique per **run**, not globally
+
+Ids restart at `L000000` / `SW000001` every run. Across five fixture years, **206 level ids
+collide**. Harmless while each run is analysed alone; actively wrong the moment Phase 14 pools
+trades from several symbols or several walk-forward windows into one table — a pooled
+uniqueness check on ids would fail, or worse, a join would silently mismatch.
+
+SPEC 1.7 already specifies a ULID for exactly this reason. The sequential ids used in Phases
+5–7 are a convenience and **must not survive into the trade log**. This is a Phase 14
+prerequisite, recorded now so it is not discovered by a corrupted join later.
+
+### 5. Finding: 3 of 20 significance tests fired on data known to contain nothing
+
+The forward-return study run per-year across four horizons is 20 tests. On the random-walk
+fixture, **three reported a confidence interval excluding zero** — right at what a 5%
+false-positive rate predicts (expected 1, P(≥3) ≈ 8%).
+
+This is the multiple-testing problem made concrete on data where the true effect is exactly
+zero by construction. It is the clearest available argument for `BACKTEST_PROTOCOL.md` §5.6:
+Benjamini–Hochberg across subgroup and ablation p-values, and a Deflated Sharpe Ratio against
+the declared configuration count. With `M = 6,912` in the tunable grid, the expected maximum
+result under the null is large, and reading any single row as an edge would be reporting
+arithmetic.
+
+### 6. The forward-return study needs a positive control, not just a null result
+
+A study that always reports "no edge" passes the random-walk fixture while being useless. The
+null result here is only meaningful because `tests/test_sweep_study.py` also pins that a
+**planted** post-sweep drift is detected at +1 bar with a CI excluding zero, in both
+directions, and that an inverted edge reports negative rather than zero.
+
+**H2 is therefore neither supported nor refuted.** It cannot be, on synthetic data. Phase 7
+proves the instrument works; the measurement needs real bars (Q1/Q2).

@@ -99,11 +99,29 @@ class StructureState:
         }
 
 
+@dataclass(frozen=True)
+class ProtectedChange:
+    """The moment a swing became the protected level.
+
+    Recorded separately from ``events`` deliberately.  The liquidity engine needs every
+    protected swing as a ``PROTECTED_SWING`` level (SPEC 8.3, source 7), but adding a
+    new entry to the structure event stream would change what BOS/CHoCH counts mean and
+    would rewrite the Phase 5 golden file for a reason that has nothing to do with
+    structure.
+    """
+
+    at: datetime
+    bar_index: int
+    side: Side  # BULLISH -> protected_low, BEARISH -> protected_high
+    swing: Swing
+
+
 @dataclass
 class StructureResult:
     state: StructureState
     swings: SwingStore
     events: list[StructureEvent] = field(default_factory=list)
+    protected_changes: list[ProtectedChange] = field(default_factory=list)
 
     def of_type(self, t: EventType) -> list[StructureEvent]:
         return [e for e in self.events if e.type is t]
@@ -130,6 +148,8 @@ class StructureEngine:
         # confirms N bars later.  Same principle as SPEC 8.9: a level is consumed once.
         self._broken: set[str] = set()
         self._grabbed: set[str] = set()
+        self.protected_changes: list[ProtectedChange] = []
+        self._last_protected: tuple[str | None, str | None] = (None, None)
 
     # ------------------------------------------------------------------- helpers
 
@@ -178,6 +198,27 @@ class StructureEngine:
 
     # ------------------------------------------------------------------ main loop
 
+    def _record_protected_change(self, i: int, at: datetime) -> None:
+        """Note every distinct swing that becomes a protected level.
+
+        Compared once at the end of the bar rather than at each assignment site, so
+        that initialisation, the BOS reset, the ratchet and a CHoCH flip are all
+        covered by one rule and cannot drift apart as those paths change.
+        """
+        st = self.state
+        lo_id = st.protected_low.id if st.protected_low else None
+        hi_id = st.protected_high.id if st.protected_high else None
+        prev_lo, prev_hi = self._last_protected
+        if lo_id is not None and lo_id != prev_lo:
+            self.protected_changes.append(
+                ProtectedChange(at, i, Side.BULLISH, st.protected_low)
+            )
+        if hi_id is not None and hi_id != prev_hi:
+            self.protected_changes.append(
+                ProtectedChange(at, i, Side.BEARISH, st.protected_high)
+            )
+        self._last_protected = (lo_id, hi_id)
+
     def on_bar_close(self, i: int) -> list[StructureEvent]:
         st = self.state
         at = from_epoch_s(self.series.close_time[i])
@@ -210,6 +251,7 @@ class StructureEngine:
             self._bearish_bar(i, at, snap_low, snap_prot_high, trend_before)
 
         self._ratchet(i)
+        self._record_protected_change(i, at)
         return self.events[before:]
 
     # ------------------------------------------------------------- initialisation
@@ -407,7 +449,12 @@ class StructureEngine:
     def run(self) -> StructureResult:
         for i in range(self.series.n):
             self.on_bar_close(i)
-        return StructureResult(state=self.state, swings=self.swings, events=self.events)
+        return StructureResult(
+            state=self.state,
+            swings=self.swings,
+            events=self.events,
+            protected_changes=self.protected_changes,
+        )
 
 
 def analyse_structure(series: BarSeries, cfg: AppConfig) -> StructureResult:

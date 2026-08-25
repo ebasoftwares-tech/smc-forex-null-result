@@ -243,6 +243,105 @@ class StructureConfig(Frozen):
     )
 
 
+class EqualLevelsConfig(Frozen):
+    """SPEC 8.5.1 -- equal highs / equal lows."""
+
+    min_touches: int = Field(2, ge=2, description="ABLATION {2, 3}. SPEC 8.5.1.")
+    tolerance_atr: float = Field(
+        0.10, gt=0, description="ABLATION {0.05, 0.10, 0.20}. SPEC 8.5.1."
+    )
+    min_separation_bars: int = Field(
+        3,
+        ge=1,
+        description=(
+            "FROZEN. SPEC 8.5.1. Two extremes on adjacent bars are one extreme, not two "
+            "touches; without this a single rounded top counts as an equal-highs cluster."
+        ),
+    )
+    max_span_bars: int = Field(50, ge=2, description="FROZEN. SPEC 8.5.1.")
+    cluster_price: Literal["extreme", "mean"] = Field(
+        "extreme",
+        description=(
+            "FROZEN. SPEC 8.5.1. The sweep must clear every stop resting beyond the "
+            "cluster, so the extreme is the level that matters; the mean would report a "
+            "sweep while part of the cluster is still untouched."
+        ),
+    )
+
+
+class RangeConfig(Frozen):
+    """SPEC 8.5.2 -- consolidation ranges.  Source disabled by default."""
+
+    window_bars: int = Field(20, ge=4, description="FROZEN. SPEC 8.5.2.")
+    max_height_atr: float = Field(2.0, gt=0, description="FROZEN. SPEC 8.5.2.")
+    max_breakout_bars: int = Field(3, ge=0, description="FROZEN. SPEC 8.5.2.")
+
+
+class LiquidityConfig(Frozen):
+    """SPEC 8 -- the liquidity engine."""
+
+    enabled_sources: list[str] = Field(
+        default_factory=lambda: [
+            "PREV_DAY",
+            "PREV_WEEK",
+            "PREV_MONTH",
+            "SESSION",
+            "SWING",
+            "EQUAL",
+            "PROTECTED_SWING",
+        ],
+        description=(
+            "ABLATION, one switch per source family (SPEC 8.3). RANGE is omitted by "
+            "default: SPEC 8.5.2 calls it the least well-founded source in the "
+            "enumeration and marks it ABLATION-ONLY."
+        ),
+    )
+    swing_timeframes: list[str] = Field(
+        default_factory=lambda: ["H4", "D1"],
+        description="FROZEN. SPEC 8.6 -- SWING_* on D1 is tier 1, on H4 tier 2.",
+    )
+    merge_tolerance_atr: float = Field(0.10, gt=0, description="FROZEN. SPEC 8.8.")
+    max_distance_atr: float = Field(
+        5.0, gt=0, description="ABLATION. SPEC 8.8 in-play filter."
+    )
+    invalidate_closes: int = Field(
+        2, ge=1, description="FROZEN. SPEC 8.7 -- the swept/accepted-through distinction."
+    )
+    invalidate_buffer_atr: float = Field(0.25, ge=0, description="FROZEN. SPEC 8.7.")
+    max_age_d1_bars: dict[str, int] = Field(
+        default_factory=lambda: {"1": 90, "2": 30, "3": 5},
+        description=(
+            "FROZEN. SPEC 8.7, per tier, in D1 bars. PREV_MONTH_* never ages out; it is "
+            "replaced monthly."
+        ),
+    )
+    max_active_levels: int = Field(40, ge=1, description="FROZEN. SPEC 8.9 prune cap.")
+    rank_tier_weight: dict[str, float] = Field(
+        default_factory=lambda: {"1": 3.0, "2": 2.0, "3": 1.0},
+        description=(
+            "FROZEN. SPEC 8.8. These weights order candidates, they do not decide "
+            "trades, and tuning an ordering function is a very efficient way to overfit "
+            "without appearing to."
+        ),
+    )
+    rank_strength_weight: float = Field(0.5, description="FROZEN. SPEC 8.8.")
+    rank_recency_weight: float = Field(1.0, description="FROZEN. SPEC 8.8.")
+    rank_bias_weight: float = Field(
+        1.0,
+        description=(
+            "FROZEN. SPEC 8.8. Multiplies `bias_alignment`, which is always 0 until the "
+            "bias engine exists (Phase 2-4/7); the term is wired but inert."
+        ),
+    )
+    tier_confirmation_tf: dict[str, str] = Field(
+        default_factory=lambda: {"1": "H4", "2": "H4", "3": "H4"},
+        description=(
+            "ABLATION. DECISION D-002 set every tier to H4; `{'3': 'H1'}` is the "
+            "primary ablation."
+        ),
+    )
+
+
 class AppConfig(Frozen):
     """The fully resolved configuration.  Hashed to produce ``config_hash``."""
 
@@ -254,6 +353,9 @@ class AppConfig(Frozen):
     atr: AtrConfig = AtrConfig()
     swing: SwingConfig = SwingConfig()
     structure: StructureConfig = StructureConfig()
+    liq: LiquidityConfig = LiquidityConfig()
+    eq: EqualLevelsConfig = EqualLevelsConfig()
+    range: RangeConfig = RangeConfig()
 
     @field_validator("symbols")
     @classmethod

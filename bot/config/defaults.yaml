@@ -75,6 +75,55 @@ structure:
   min_bars_between_flips: 2
   protected_on_bos: most_recent_low
 
+# SPEC 8.  Every level traces to one of the enumerated sources.  Round numbers,
+# Fibonacci levels, pivots, moving averages and option strikes are deliberately NOT
+# liquidity in v1.0: each would be defensible, and each multiplies the level population
+# and therefore the number of "sweeps" available to find (SPEC 8.3).
+liq:
+  enabled_sources:
+    - PREV_DAY
+    - PREV_WEEK
+    - PREV_MONTH
+    - SESSION
+    - SWING
+    - EQUAL
+    - PROTECTED_SWING
+  swing_timeframes: [H4, D1]
+  merge_tolerance_atr: 0.10
+  max_distance_atr: 5.0
+  invalidate_closes: 2
+  invalidate_buffer_atr: 0.25
+  max_age_d1_bars:
+    "1": 90
+    "2": 30
+    "3": 5
+  max_active_levels: 40
+  rank_tier_weight:
+    "1": 3.0
+    "2": 2.0
+    "3": 1.0
+  rank_strength_weight: 0.5
+  rank_recency_weight: 1.0
+  rank_bias_weight: 1.0
+  # DECISION D-002: every tier confirms on H4.  {"3": "H1"} is the ablation.
+  tier_confirmation_tf:
+    "1": H4
+    "2": H4
+    "3": H4
+
+eq:
+  min_touches: 2
+  tolerance_atr: 0.10
+  min_separation_bars: 3
+  max_span_bars: 50
+  cluster_price: extreme
+
+# SPEC 8.5.2.  Not in liq.enabled_sources by default -- ABLATION-ONLY.
+range:
+  window_bars: 20
+  max_height_atr: 2.0
+  max_breakout_bars: 3
+
 session:
   source_tf: M15
   min_bar_coverage: 0.60

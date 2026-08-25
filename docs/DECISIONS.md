@@ -306,3 +306,94 @@ recorded so that nobody later mistakes the rule's rarity for a bug.
 context plus displacement, and neither exists until Phases 7 and 8. The structure engine
 emits the unfiltered superset, which is exactly what makes the marginal value of those
 filters measurable later (SPEC 6.9, `BACKTEST_PROTOCOL.md` §6.2).
+
+---
+
+## D-006 — Corrections and three findings, from implementing Phase 6
+
+| | |
+|---|---|
+| **Date** | 2026-08-25 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 6 implementation (liquidity engine) and its test suite |
+
+### 1. Equal-cluster growth was re-dating its own confirmation (causality bug)
+
+SPEC 8.5.1 says an equal-highs level is "confirmed at the `confirmed_at` of the last
+constituent swing". Implemented literally, a cluster that grew from two touches to three
+**moved its `confirmed_at` forward**, so a level that became knowable at bar 152 was reported
+as knowable only once a swing at bar 200 had happened.
+
+That is a lookahead: the level's admission time depended on a swing that had not occurred yet.
+Caught by the prefix-stability test, which is exactly the shape of leak that test exists for.
+
+**Fixed:** confirmation is stamped when the cluster *first* reaches `eq.min_touches` and never
+moved. Later growth amends strength, price and `source_ids` — permitted by SPEC 1.2, which
+allows amending a label but never retracting or re-dating a signal.
+
+### 2. Merging needed a fixpoint, and is transitive by construction
+
+Two related corrections:
+
+* A single clustering pass does not satisfy its own post-condition. SPEC 8.8 moves the
+  survivor to the *more extreme* price, which can push it inside the next cluster, leaving two
+  active levels within the tolerance. Merging now runs to a fixpoint, so "no two active levels
+  on a side within `tol`" is true at the end of every bar.
+* Because of that same extreme-price rule, **merging is transitive**: a dense ladder collapses
+  to its extremes even though its endpoints are far outside the tolerance. This is the
+  specified rule working as written — the stops sit above the highest high, and one level is
+  what a sweep must clear — not chain drift. A merged level's price is always some real
+  constituent's price, never an invented one. Both properties are pinned by test.
+
+The consequence is that **~65% of all levels created end as MERGED**. That is arithmetic: with
+the book capped at 40 active levels inside a 5-ATR in-play band and a 0.1-ATR merge tolerance,
+the mean gap between neighbours is smaller than the tolerance.
+
+### 3. OVERLAP and killzones are not liquidity sources
+
+`OVERLAP` is derived (London ∩ New York) and is not a configured session at all. Measured on
+the fixture, **an overlap extreme coincides exactly with the London or New York extreme on 38
+of 42 days (90%)** — it is a sub-window of two sessions already counted, not an independent
+inference about resting orders. Including it inflated the population by ~20% and the merge
+machinery then deleted it again.
+
+Killzones are execution windows, not pools of orders.
+
+**Fixed:** only sessions whose configured `role` contains `liquidity` contribute levels, which
+excludes both without a special case.
+
+### 4. Finding: `PROTECTED_SWING` is a strength annotation, not an independent source
+
+SPEC 8.3 enumerates it as source 7 and the spec text calls it "arguably the highest-quality
+level in the model". Measured: **95% of the levels it emits are the same swing, at the
+identical price, that `SWING_*` has already emitted** — the protected low *is* a confirmed
+swing low. They merge on the bar they are admitted, so the source's only lasting effect is
+`+1` strength on whichever swing is currently protected.
+
+That is defensible behaviour — the protected swing *should* outrank an ordinary one, and
+strength is how this engine says so. But it is not what §8.3 implies, and it has a concrete
+consequence for Phase 7: **`PROTECTED_SWING` will show a near-zero sweep rate**, because the
+coincident `SWING_*` level survives the merge and anchors the sweep. Read as "this source does
+not work", that would be wrong. Its 4% penetration rate against 30–68% for every other source
+is the same artefact one step earlier.
+
+### 5. Finding: `PREV_SESSION_EXTREME` (SPEC 8.3 source 9) is redundant and is not implemented
+
+A tier-3 level lives for 5 D1 bars (SPEC 8.7), so yesterday's Asian high is *still an ACTIVE
+`SESSION_HIGH`*. Emitting it again under a second name would double-count every level and
+every sweep of it. The source is deliberately folded into `SESSION_*`.
+
+### 6. Finding: the population is 61% session levels
+
+SPEC 8.10 asks for the population report first and says why. `SESSION` emits two levels per
+session per day, against two per *day* for `PREV_DAY` and two per *week* for `PREV_WEEK`, so
+it is 61% of everything created and tier 3 is 61% of the book. **Any statistic computed over
+undifferentiated levels is mostly a statement about session extremes.** Every downstream
+report must break down by source; this is not a defect to fix but a shape to carry.
+
+### Not in SPEC 8.7: two extra terminal statuses
+
+`MERGED` and `PRUNED` are required by 8.8 (two levels become one) and 8.9 (levels beyond the
+cap are dropped and never return) but are absent from the 8.7 lifecycle list. Recorded as
+distinct statuses rather than deletions so the population report can account for every level
+ever created.

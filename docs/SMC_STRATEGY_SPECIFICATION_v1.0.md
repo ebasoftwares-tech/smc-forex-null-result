@@ -1048,6 +1048,20 @@ LiquidityLevel {
 | 8 | `RANGE_HIGH` / `RANGE_LOW` | BUY / SELL | Extremes of a detected consolidation (§8.5.2) | Range confirmation |
 | 9 | `PREV_SESSION_EXTREME` | BUY / SELL | Prior instance of the same session, N days back | That session's close |
 
+> **Phase 6 implementation notes (D-006), affecting three rows of this table.**
+> **Source 7 (`PROTECTED_SWING`) does not produce independent levels.** The protected low
+> *is* a confirmed swing low, so 95% of what it emits duplicates a `SWING_*` level at the
+> identical price and merges on admission. Its real effect is `+1` strength on the protected
+> swing — defensible, but it means the source will show a near-zero sweep rate in Phase 7,
+> which must not be read as the source failing.
+> **Source 9 (`PREV_SESSION_EXTREME`) is not implemented and is folded into source 4.** A
+> tier-3 level lives 5 D1 bars, so yesterday's session extreme is still an ACTIVE
+> `SESSION_*`; a second name for it would double-count every sweep.
+> **Source 4 excludes `OVERLAP` and the killzones.** An overlap extreme coincides with the
+> London or New York extreme on 90% of days — it is a sub-window of two sessions already
+> counted, not an independent pool. Only sessions whose configured role includes `liquidity`
+> contribute.
+
 **Not liquidity, deliberately:** round numbers, Fibonacci levels, pivot points, moving
 averages, option strikes. Each would be defensible; each also multiplies the level population
 and therefore the number of "sweeps" available to find. v1.0 restricts itself to levels

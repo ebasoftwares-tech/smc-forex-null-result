@@ -112,10 +112,10 @@ bot/
     bars.py            Bar/Series types, as-of accessors                      [Phase 1]
     indicators.py      Wilder ATR with the ATR_ref(i) = ATR(i−1) rule         [Phase 1]
     sessions.py        §3 SessionInstance builder (M15 source, SPEC 3.6)      [Phase 1]
-    swings.py          §5
-    structure.py       §6
+    swings.py          §5 fractal detection, alternation, HH/HL/LH/LL          [Phase 5]
+    structure.py       §6 trend state, BOS / CHoCH, protected swings           [Phase 5]
     bias.py            §7
-    liquidity.py       §8
+    liquidity.py       §8 level sources, lifecycle, merge, rank                [Phase 6]
     sweeps.py          §9
     displacement.py    §10
     fvg.py             §12

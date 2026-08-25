@@ -727,3 +727,149 @@ Presented as one descending chain the funnel shows a rise in the middle and invi
 a bug that is not there. `LEVEL_STAGES` and `EVENT_STAGES` are kept separate, only the event
 chain is asserted monotone, and the join is reported as the fan-out it is. Caught by the gate
 report's own monotonicity check on its first run.
+
+---
+
+## D-010 — The H5 marginal-value study, run out of order
+
+| | |
+|---|---|
+| **Date** | 2026-08-25 |
+| **Status** | ACTIVE |
+| **Trigger** | `bot/research/marginal_value.py` — SPEC 6.9 / `BACKTEST_PROTOCOL.md` §6.2 |
+
+Run before Phase 10 rather than after Phase 14. The population it needs already existed
+after Phase 9, and H5 is the hypothesis that decides whether the methodology's central
+mechanism is real; answering it after five more phases had been built around the
+assumption would have been expensive in exactly the way that matters.
+
+**Outcome: the instrument is built and validated. H5 itself remains open**, and on
+synthetic data it can only remain open — the true difference between MSS and
+CHoCH-not-MSS is zero by construction on a random walk.
+
+### 1. The verdict is three-way, because H5 is falsified by a *negative* result
+
+Every other study in this project risks a false positive. This one risks the opposite,
+and the opposite error is worse: a confidence interval spanning zero, written up as
+"displacement is decoration", would retire the methodology's central claim on the
+strength of a sample that could not resolve anything.
+
+Falsifying H5 is an **equivalence** claim, and equivalence needs the interval to sit
+inside a margin — not merely to contain zero. So:
+
+| Verdict | Condition |
+|---|---|
+| `DIFFERENT` | CI excludes zero |
+| `EQUIVALENT` | CI lies entirely inside +/-`EQUIVALENCE_MARGIN_ATR`. **The only verdict that licenses "decoration"** |
+| `UNDERPOWERED` | CI spans zero *and* extends past the margin — the study cannot answer |
+
+`MarginalValueStudy.headline()` refuses to describe an `UNDERPOWERED` study as a null
+result, in those words, and a test pins the wording. A two-way verdict would have
+reported this fixture as "no difference" at every horizon.
+
+### 2. The equivalence margin is a declared judgement, fixed before any result was read
+
+`EQUIVALENCE_MARGIN_ATR = 0.25`. The reasoning: displacement selects legs that moved at
+least 1.5 ATR, and a selector that strong should shift the *subsequent* return by a
+non-trivial fraction of an ATR if it carries information. A sixth of the threshold it
+enforces is the line taken.
+
+It is not derived from the data and could not be — choosing it afterwards would select
+the verdict rather than measure it (§10.2). Every row also reports its own minimum
+detectable effect and required sample size, so a reader applying a different margin needs
+no re-run.
+
+### 3. Bug found: half the sample was one forward return counted twice
+
+The forward return is a function of `(break bar, direction)` and nothing else, so two
+candidates sharing both contribute the *identical number*. The first version pooled raw
+candidates, and on the fixture **640 CHoCH candidates collapse to 315 distinct
+observations — 50.8% of the rows were redundant.** Every interval was about sqrt(2) too
+narrow and every required-sample figure understated by two.
+
+Worse: **15 bars carried both labels**, an MSS candidate and a CHoCH-not-MSS candidate
+breaking together, putting one identical return into *both* groups and dragging their
+means toward each other. That biases the study toward `EQUIVALENT` — the verdict that
+declares the methodology decoration. A bug in the other direction would have been
+tolerable.
+
+It was producing a real false result: h=1 read `EQUIVALENT` before the fix and
+`UNDERPOWERED` after.
+
+`events_from()` now collapses to one event per `(bar, direction)`, resolving a mixed bar
+to **MSS** — the same "best outcome represents the opportunity" rule `funnel.py` applies
+to sweep clusters, and deliberately the stricter of the two: SPEC 9.4 keys on the
+*sweep*, but two sweeps in different clusters can still break on one bar.
+
+**Found by a number disagreeing across two reports, not by review.** The study projected
+204 dev-set MSS where Phase 9's funnel projected 152; chasing the discrepancy found the
+duplication. Two reports quoting the same quantity is worth the redundancy.
+
+### 4. Finding: H5 is not answerable at the 12-bar horizon on the current design
+
+MSS events needed to resolve +/-0.25 ATR, against what Phase 9 projects for the in-sample
+period (4 years, 10 symbols; 3 of them the development set):
+
+| h | MSS needed | Dev set (128) | Universe (427) |
+|---:|---:|:--:|:--:|
+| 1 | 58 | yes | yes |
+| 4 | 222 | **no** | yes |
+| 12 | 804 | **no** | **no** |
+
+**At the 12-bar horizon the full in-sample universe is not enough**, whatever the
+backtest shows. Required counts scale with the return variance, which grows with the
+horizon, so the long horizons are far more expensive than they look.
+
+This is the study's most durable output: it is a property of the return distribution and
+the funnel's output rate, not of the fixture's realism, so it transfers to real data far
+better than any effect size here does. Three ways out, all better decided now than after
+Phase 14 — answer H5 at the short horizons only and say so; widen the margin (defensible
+as a decision now, indefensible as a reaction later); or leave H5 open and rely on §6.5's
+ablation delta, which measures the same component through the full system.
+
+### 5. Both controls pass, and the positive control agrees with the power arithmetic
+
+- **Positive control.** A study that could only ever say "no difference" would pass every
+  null test in the file. An injected 0.8 ATR effect is detected end to end. The detection
+  boundary across a grid of shifts falls **exactly where the MDE says it should** —
+  detected at 0.5, not at 0.25, with an MDE of 0.336 — which is the internal consistency
+  check that makes the required-sample table above worth acting on.
+- **Null calibration.** Shuffling the MSS label makes the true effect exactly zero, so
+  every `DIFFERENT` under a shuffle is a false positive by construction. Measured
+  **7.8%** against alpha of 5%, which at 400 trials is **2.5 sigma** — genuinely
+  anti-conservative, not noise.
+
+The percentile bootstrap under-covers with a few dozen heavy-tailed observations. Both
+consequences point the same way: the intervals are too narrow, so the study is *more*
+underpowered than its table shows, and a `DIFFERENT` verdict is over-eager — which for
+H5 is the safe direction, since the error worth avoiding is falsely declaring the
+methodology decoration. Left uncorrected for that reason, and because swapping the
+interval method on synthetic data would be tuning the instrument against noise. `MDE` and
+the required-sample figures come from the parametric SE and are unaffected.
+
+**Report the sigma, not the rate.** This project has twice written up a sub-2-sigma
+wobble as a finding before catching itself (D-007 §5, D-008 §3); the first draft of this
+section did it a third time, calling a 0.5-sigma gap "mildly anti-conservative". The
+report now computes the standard error and states the deviation in sigma.
+
+### 6. Overlapping windows are reported, not assumed away
+
+**33.7% of CHoCH events have a 12-bar forward window overlapping a neighbour's** (it read
+67.3% before the duplicate fix — half the apparent "overlap" was duplicate rows at one
+bar). Overlapping windows are not independent draws and narrow every interval.
+
+Every comparison is therefore also run on a **non-overlapping subsample**, thinned
+earliest-first so it is deterministic and seed-free. It fixes the independence and
+destroys the sample size — at h=12 it leaves 7 MSS events. Neither version can answer H5
+here, and reporting both is what makes that visible rather than letting the more
+convenient one stand alone. A **stratified** sample (matched on the D-001 session slot
+and ATR tercile, as `sweep_study.py` matches controls) is reported for the same reason.
+
+### 7. R-expectancy is deferred, not skipped
+
+§6.2 asks for forward returns *and* R-expectancy "where a hypothetical trade can be
+constructed". It cannot be: stops (SPEC 16) and targets (SPEC 17) are Phase 12, so there
+is no R. Inventing a stop distance to fill the gap would make the answer a property of
+that invention. Reported as **DEFERRED**, and worth revisiting after Phase 12 — R-based
+expectancy may resolve at a smaller sample than raw forward returns do, since a stop
+truncates the left tail that drives the variance in the table above.

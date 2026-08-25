@@ -1,6 +1,6 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-25, after Phase 9.
+Last updated: 2026-08-25, after Phase 9 and the H5 marginal-value study.
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -28,13 +28,14 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | | |
 |---|---|
 | **Phases complete** | 1, 5, 6, 7, 8, 9 |
-| **Tests** | 275, all passing |
-| **Commits** | 6, one per phase, on `master` |
+| **Tests** | 309, all passing |
+| **Commits** | 7, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 275 tests, ~13s
-.venv/Scripts/python.exe scripts/phase9_report.py  # regenerate the latest gate report
+.venv/Scripts/python.exe -m pytest tests/          # 309 tests, ~20s
+.venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
+.venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
 ```
 
 ### Phases built
@@ -47,6 +48,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 7 | Sweep detection + forward-return study (H2) | `reports/phase7_gate.md` | 7/7; closed Phase 6's deferred half |
 | 8 | Displacement + FVG detection | `reports/phase8_gate.md` | 8/8 |
 | 9 | CHoCH reference selection, MSS confirmation, **the funnel** | `reports/phase9_gate.md` | 10/10 — but see §3, the gate passes on a *projection* |
+| — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, run out of order) | `reports/marginal_value.md` | 8/8 — instrument validated, **H5 open** |
 
 **Phase 5 was built before 2–4 deliberately**: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
@@ -88,6 +90,38 @@ Four things to carry forward, and the first is the most important:
 
 ---
 
+## 3a. The H5 study, and the number that outlives it
+
+`reports/marginal_value.md`. **H5 — "displacement filtering adds value" — is open**, and
+on a random walk it can only be: the true MSS vs CHoCH-not-MSS difference is zero by
+construction, so a `DIFFERENT` verdict here would mean the study is broken.
+
+What the run does establish is a planning fact that transfers to real data, because it is
+a property of the return distribution and the funnel's output rate rather than of the
+fixture's realism:
+
+| Horizon | MSS needed to resolve +/-0.25 ATR | Dev set projects 128 | Universe projects 427 |
+|---:|---:|:--:|:--:|
+| +1 | 58 | yes | yes |
+| +4 | 222 | **no** | yes |
+| +12 | 804 | **no** | **no** |
+
+**At the 12-bar horizon the full in-sample universe is not enough**, whatever the backtest
+shows. Decide which way out to take *now* rather than after Phase 14 — answer H5 at the
+short horizons only, widen the margin (a defensible decision in advance and an
+indefensible reaction later), or leave H5 to §6.5's ablation delta. See D-010 §4.
+
+Two things about the study itself that are easy to undo:
+
+- **The verdict is three-way.** `UNDERPOWERED` is not `EQUIVALENT`. Only `EQUIVALENT` —
+  the CI sitting *inside* the margin — licenses "the requirement is decoration". A
+  two-way verdict would have reported this fixture as a null result on the methodology's
+  central claim.
+- **The equivalence margin is declared, not derived**, and fixed before any result was
+  read. Every row carries its own MDE so a different margin needs no re-run.
+
+---
+
 ## 4. Module map
 
 ```
@@ -97,9 +131,10 @@ bot/data/       calendar.py, resample.py, quality.py, ingest.py, synthetic.py
 bot/core/       bars.py, indicators.py, sessions.py, swings.py, structure.py,
                 liquidity.py, sweeps.py, displacement.py, fvg.py, mss.py
 bot/research/   sweep_study.py (H2), displacement_study.py (SPEC 10.6),
-                funnel.py (SPEC 11.7)
-scripts/        build_dataset.py, phase{1,5,6,7,8,9}_report.py, regen_golden.py
-tests/          275 tests + tests/golden/structure_h4.json
+                funnel.py (SPEC 11.7), marginal_value.py (H5)
+scripts/        build_dataset.py, phase{1,5,6,7,8,9}_report.py,
+                marginal_value_report.py, regen_golden.py
+tests/          309 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -119,7 +154,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-009 record corrections and findings from each phase's implementation.
+D-004 through D-010 record corrections and findings from each phase's implementation.
 
 ---
 
@@ -146,12 +181,15 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 15 | **The sweep→MSS window has two floors**, the WAIT from the sweep *extreme* and knowability from the sweep *confirm* bar. Only the first is in the spec text (D-009 §3). |
 | 16 | **The funnel changes units mid-chain**: stages 1–2 count levels, 3–7 count events, and `sweeps_triggered > levels_swept_or_tested` is correct, not a bug (D-009 §10). |
 | 17 | **Stacked levels swept by one bar are ONE opportunity** (SPEC 9.4). Every Phase 9 headline number is deduplicated per cluster; the per-sweep MSS count is 51 against 38, and is not the gate. |
+| 18 | **A forward return is a function of `(break bar, direction)` and nothing else.** Candidates sharing both contribute the identical number, so the H5 study collapses them — 640 raw CHoCH become 315 observations. Leaving them in made h=1 read EQUIVALENT when it is UNDERPOWERED (D-010 §3). |
+| 19 | **`UNDERPOWERED` is not `EQUIVALENT`.** H5 is falsified by a *negative*, so only a CI sitting inside the declared margin licenses "decoration". A two-way verdict reports this fixture as a null result on the methodology's central claim. |
+| 20 | **The H5 equivalence margin (0.25 ATR) is declared, not derived**, and fixed before any result was read. Changing it after seeing a verdict selects the answer (§10.2). |
 
 ---
 
-## 7. Three statistical lessons already learned the hard way
+## 7. Four statistical lessons already learned the hard way
 
-All three are the same mistake at different scales, and all three are now pinned by tests.
+All four are the same mistake at different scales, and all four are now pinned by tests.
 
 - **Phase 7:** 3 of 20 year×horizon significance tests fired on a random walk (≈1
   expected). The multiple-testing problem on data whose true effect is zero *by
@@ -162,6 +200,10 @@ All three are the same mistake at different scales, and all three are now pinned
   parameter that decides the outcome, while an ABLATION parameter spans the gate verdict.
   A classification written down in advance is a hypothesis about which knob matters, and
   it is being falsified twice.
+- **The H5 study:** its first draft called a 0.5-sigma gap in the null calibration
+  "mildly anti-conservative" — the same mistake a third time. The report now computes
+  the standard error and states the deviation **in sigma**, which turned out to matter:
+  after the duplicate-row fix the real deviation was 2.5 sigma and genuine.
 
 **A statistic not compared against what noise alone would produce is not a finding.**
 
@@ -189,6 +231,9 @@ no participants and no structure, so:
 - **Phase 9's gate verdict is a projection built on that rate**, and the projection also
   assumes symbols are interchangeable and years stationary. Both are false; the ten majors
   are heavily correlated, so the effective sample is smaller than the count.
+- **The H5 study validates its own instrument and nothing else.** A `DIFFERENT` verdict
+  on this fixture would mean it is broken. Its power arithmetic is the one output that
+  transfers (§3a).
 
 `bot/data/synthetic.py` says so in its own docstring and is never used to produce a
 strategy result.
@@ -197,28 +242,18 @@ strategy result.
 
 ## 9. What to do next
 
-Phase 9 was the decision point and it did not stop the project, so the design stands and
-the next phases are the ones that turn an event into a trade.
+Phase 9 was the decision point and it did not stop the project. The H5 study that
+followed it is built, validated and **open** — it cannot be answered on synthetic data,
+and one of its findings is that part of it may not be answerable on real data either
+(§3a). So the design stands and the next phases are the ones that turn an event into a
+trade.
 
-### The choice to make first
+### Phase 10 → 13 → 14, building toward a backtest
 
-Two orderings are defensible and they answer different questions:
-
-- **Phase 10 → 13 → 14 (build toward a backtest).** FVG lifecycle, order blocks, setup
-  assembly, entries, risk, then the engine. Fastest route to an equity curve.
-- **SPEC 6.9's marginal-value test first.** Forward returns for (a) all CHoCH, (b) MSS
-  only, (c) CHoCH-not-MSS. The population is already retained (477 events on the fixture)
-  and `bot/research/sweep_study.py` is the template — it is a small study, not a phase.
-
-**The second is worth doing first, and on real data it is close to decisive**: if MSS and
-CHoCH-not-MSS are statistically indistinguishable, the sweep-plus-displacement requirement
-adds nothing, which is the central claim of the whole methodology, and `BACKTEST_PROTOCOL.md`
-§6.2 says that is a headline finding rather than a reason to re-tune. Building five more
-phases before asking it risks answering it after the entry engine has been written around
-the assumption.
-
-On synthetic data it can only return "no difference", so it is worth doing **when Q1/Q2
-land**, not before.
+FVG lifecycle (SPEC 12.2 — touch, PARTIAL, MITIGATED, INVALIDATED, EXPIRED, plus 12.3's
+selection rule), order blocks, setup assembly, entries, risk, then the engine. The
+alternative ordering — run the H5 marginal-value test first — has been taken, which is
+why it is no longer listed here.
 
 ### Still blocking real results
 
@@ -228,15 +263,27 @@ no broker chosen. Until then:
 
 - Phase 1's broker-candle reconciliation stays BLOCKED.
 - Phase 9's gate stays PASS-on-projection.
+- H5 stays open: on a random walk the true MSS vs CHoCH-not-MSS difference is zero by
+  construction, so the study can only ever validate its own instrument.
 - Every study runs on synthetic data and can only validate instruments, not measure edge.
 
-**This is now the single highest-value action in the project.** Five engines are built and
-none of their numbers mean anything about markets yet.
+**This is still the single highest-value action in the project.** Six engines and two
+studies are built, and none of their numbers mean anything about markets yet.
+
+### When real data lands, run these in this order
+
+1. **`scripts/phase9_report.py`** — the funnel on real bars. The gate's PASS is currently
+   a projection from a synthetic conversion rate; this replaces it with a measurement,
+   and the ABLATION sensitivity in §3 means the verdict could genuinely go either way.
+2. **`scripts/marginal_value_report.py`** — H5, for real. The instrument is validated and
+   the power arithmetic re-computes itself from the real return variance, which is the
+   number most likely to move.
+3. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
+   TUNABLE/ABLATION split.
 
 ### Before Phase 14
 
-Namespace ids (item 10 above) and re-measure the condition-bindingness ranking on real
-bars (D-008 §4, D-009 §7) before trusting the TUNABLE/ABLATION split.
+Namespace ids (§6 item 10) — required before trades from different runs are pooled.
 
 ### When Phases 2–4 land
 
@@ -245,8 +292,17 @@ bars (D-008 §4, D-009 §7) before trusting the TUNABLE/ABLATION split.
 `bias.gate_mode = none`, the variant SPEC 7.5 says MUST be run anyway. Dropping a real
 gate in needs no change to the engine, **and it can only reduce the MSS count**: every
 Phase 9 number is an upper bound. Re-run `scripts/phase9_report.py` afterwards; the gate
-was passed with 152 against a floor of 120, so a gate that rejects more than a fifth of
-setups puts the development set back under it.
+passed with 152 against a floor of 120, so a gate rejecting more than a fifth of setups
+puts the development set back under it — and would push H5 further out of reach at the
+same time.
+
+### After Phase 12, revisit H5
+
+R-expectancy is the half of `BACKTEST_PROTOCOL.md` §6.2 that could not be run: stops
+(SPEC 16) and targets (SPEC 17) do not exist yet, so there is no R to measure. Worth
+returning to, and not only for completeness — a stop truncates the left tail that drives
+the forward-return variance, so an R-based comparison may resolve at a **smaller** sample
+than §3a says raw forward returns need.
 
 ---
 

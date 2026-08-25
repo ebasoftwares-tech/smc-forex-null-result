@@ -1,12 +1,20 @@
 # SMC Forex Bot — Specification Repository
 
-**Status: PHASES 1, 5, 6, 7, 8 and 9 COMPLETE.** 275 tests green.
+**Status: PHASES 1, 5, 6, 7, 8 and 9 COMPLETE**, plus the H5 falsification study. 309 tests green.
 
 Phase 9 was the project's decision point — the funnel that says whether the design
 produces a testable number of tradable events. It does, on the `major` reference mode
 and **on a projection**: 1.98% of sweeps become an MSS, which scales to 507 events
 across the in-sample universe against a gate of 300. The `micro` mode misses by an
 order of magnitude and is reported as a pre-registered null. See `docs/STATE.md` §3.
+
+The **H5 study** (`reports/marginal_value.md`, SPEC 6.9) was then run out of order,
+before Phase 10, because it tests the methodology's central mechanism and answering
+it after five more phases were built on the assumption would be expensive. Its
+instrument is validated and **H5 is open** — on a random walk it can only be. Its
+durable output is a power requirement: resolving MSS against CHoCH-not-MSS at the
+12-bar horizon needs ~800 MSS events, and the in-sample universe projects ~427. See
+`docs/STATE.md` §3a.
 
 | Phase | Scope | Gate report |
 |---|---|---|
@@ -16,15 +24,17 @@ order of magnitude and is reported as a pre-registered null. See `docs/STATE.md`
 | 7 | Sweep detection + the forward-return study (H2) | `reports/phase7_gate.md` (7/7; closes Phase 6's deferred half) |
 | 8 | Displacement + FVG detection | `reports/phase8_gate.md` (8/8) |
 | 9 | CHoCH reference selection, MSS confirmation, the funnel | `reports/phase9_gate.md` (10/10; gate passes on projection, blocked on measurement) |
+| — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, out of order) | `reports/marginal_value.md` (8/8; instrument validated, H5 open) |
 
 Phase 5 was built before 2–4 deliberately: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
 mostly configuration. Phases 2–4 and 10–17 are not started.
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/             # 275 tests
+.venv/Scripts/python.exe -m pytest tests/             # 309 tests
 .venv/Scripts/python.exe scripts/phase1_report.py     # Phase 1 gate report
 .venv/Scripts/python.exe scripts/phase9_report.py     # Phase 9 gate report — the funnel
+.venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
 .venv/Scripts/python.exe scripts/regen_golden.py      # only when a structure change is intended
 ```
 

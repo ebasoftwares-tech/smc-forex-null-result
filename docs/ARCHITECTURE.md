@@ -143,6 +143,7 @@ bot/
     sweep_study.py     §9.7 forward-return study of sweeps (H2)               [Phase 7]
     displacement_study.py  §10.6 threshold distribution + rejection rates  [Phase 8]
     funnel.py          §11.7 the sweep -> CHoCH -> MSS funnel and its gate  [Phase 9]
+    marginal_value.py  §6.2 MSS vs CHoCH-not-MSS (tests H5)                  [study]
   reporting/
     charts.py          renders from events.jsonl only
     narrative.py       §21.4

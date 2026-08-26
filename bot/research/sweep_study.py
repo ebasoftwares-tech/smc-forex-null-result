@@ -38,6 +38,7 @@ from bot.core.bars import BarSeries, from_epoch_s
 from bot.core.indicators import atr_ref
 from bot.core.liquidity import Side
 from bot.core.sweeps import SweepEvent
+from bot.research.stats import bootstrap_diff_ci, terciles
 
 DEFAULT_HORIZONS = (1, 3, 6, 12)
 
@@ -88,19 +89,6 @@ def _direction(e: SweepEvent) -> int:
     return 1 if e.side is Side.SELL_SIDE else -1
 
 
-def _terciles(values: np.ndarray) -> np.ndarray:
-    """Tercile index 0/1/2, with NaN mapped to -1 (excluded from matching)."""
-    out = np.full(len(values), -1, dtype=np.int64)
-    ok = np.isfinite(values)
-    if ok.sum() < 3:
-        return out
-    q1, q2 = np.quantile(values[ok], [1 / 3, 2 / 3])
-    out[ok & (values <= q1)] = 0
-    out[ok & (values > q1) & (values <= q2)] = 1
-    out[ok & (values > q2)] = 2
-    return out
-
-
 def forward_returns(
     series: BarSeries, bars: Sequence[int], dirs: Sequence[int], horizon: int, atr: np.ndarray
 ) -> np.ndarray:
@@ -123,19 +111,6 @@ def forward_returns(
     return np.asarray(out, dtype=np.float64)
 
 
-def _bootstrap_diff_ci(
-    a: np.ndarray, b: np.ndarray, n_boot: int, rng: np.random.Generator, alpha: float = 0.05
-) -> tuple[float, float]:
-    """Percentile bootstrap CI on ``mean(a) - mean(b)``."""
-    if len(a) < 2 or len(b) < 2:
-        return (float("nan"), float("nan"))
-    ia = rng.integers(0, len(a), size=(n_boot, len(a)))
-    ib = rng.integers(0, len(b), size=(n_boot, len(b)))
-    diffs = a[ia].mean(axis=1) - b[ib].mean(axis=1)
-    lo, hi = np.quantile(diffs, [alpha / 2, 1 - alpha / 2])
-    return float(lo), float(hi)
-
-
 def run_study(
     series: BarSeries,
     events: Sequence[SweepEvent],
@@ -153,7 +128,7 @@ def run_study(
 
     atr = atr_ref(series, cfg.atr.period)
     hours = np.array([from_epoch_s(t).hour for t in series.open_time], dtype=np.int64)
-    terc = _terciles(atr)
+    terc = terciles(atr)
 
     sweep_bars = np.array([e.confirm_bar for e in events], dtype=np.int64)
     sweep_dirs = np.array([_direction(e) for e in events], dtype=np.int64)
@@ -196,7 +171,7 @@ def run_study(
         c = forward_returns(series, ctrl_bars_a, ctrl_dirs_a, k, atr)
         if len(s) == 0 or len(c) == 0:
             continue
-        lo, hi = _bootstrap_diff_ci(s, c, bootstrap, rng)
+        lo, hi = bootstrap_diff_ci(s, c, bootstrap, rng)
         study.results.append(
             HorizonResult(
                 horizon=k,

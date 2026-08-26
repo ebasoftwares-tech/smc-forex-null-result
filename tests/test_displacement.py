@@ -229,7 +229,11 @@ def test_fvg_geometry_ce_and_edges(cfg):
     f = [x for x in detect_fvgs(s, cfg) if x.direction is FvgDirection.BULLISH][-1]
     assert f.size == pytest.approx(f.zone_high - f.zone_low)
     assert f.ce == pytest.approx((f.zone_low + f.zone_high) / 2)
-    assert f.proximal == f.zone_low and f.distal == f.zone_high
+    # Proximal is the edge price reaches FIRST. A bullish gap forms with price above it,
+    # so a return meets zone_high first. SPEC 12.1's table labels this backwards and
+    # contradicts 12.2's touch rule and 12.4's worked example -- see D-011. This
+    # assertion was inverted until Phase 10.
+    assert f.proximal == f.zone_high and f.distal == f.zone_low
     assert f.status is FvgStatus.UNMITIGATED
 
 
@@ -245,7 +249,8 @@ def test_bearish_fvg_mirrors(cfg):
     f = bears[-1]
     assert f.zone_low == pytest.approx(1.07500)
     assert f.zone_high == pytest.approx(1.07750)
-    assert f.proximal == f.zone_high and f.distal == f.zone_low
+    # Mirror of the above: price sits BELOW a bearish gap, so zone_low is reached first.
+    assert f.proximal == f.zone_low and f.distal == f.zone_high
 
 
 def test_undersized_fvgs_are_not_created(cfg):

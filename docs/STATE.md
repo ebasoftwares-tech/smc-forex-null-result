@@ -1,6 +1,6 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-25, after Phase 9 and the H5 marginal-value study.
+Last updated: 2026-08-25, after Phase 10.
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -27,14 +27,15 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 
 | | |
 |---|---|
-| **Phases complete** | 1, 5, 6, 7, 8, 9 |
-| **Tests** | 309, all passing |
-| **Commits** | 7, on `master` |
+| **Phases complete** | 1, 5, 6, 7, 8, 9, 10 |
+| **Tests** | 349, all passing |
+| **Commits** | 8, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 309 tests, ~20s
+.venv/Scripts/python.exe -m pytest tests/          # 349 tests, ~23s
 .venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
+.venv/Scripts/python.exe scripts/phase10_report.py  # the Phase 10 FVG gate
 .venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
 ```
 
@@ -49,6 +50,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 8 | Displacement + FVG detection | `reports/phase8_gate.md` | 8/8 |
 | 9 | CHoCH reference selection, MSS confirmation, **the funnel** | `reports/phase9_gate.md` | 10/10 — but see §3, the gate passes on a *projection* |
 | — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, run out of order) | `reports/marginal_value.md` | 8/8 — instrument validated, **H5 open** |
+| 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 — two spec corrections, see D-011 |
 
 **Phase 5 was built before 2–4 deliberately**: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
@@ -56,8 +58,8 @@ mostly configuration.
 
 ### Not started
 
-Phases 2–4 (Monthly/Weekly/Daily bias), 10–17 (FVG lifecycle, order blocks, setup
-assembly, entries, risk, backtest, charts, paper, live).
+Phases 2–4 (Monthly/Weekly/Daily bias), 11–17 (order blocks, entries, risk, backtest,
+charts, paper, live).
 
 ---
 
@@ -130,11 +132,12 @@ bot/config/     schema.py (every parameter, with FROZEN/ABLATION/TUNABLE in its
 bot/data/       calendar.py, resample.py, quality.py, ingest.py, synthetic.py
 bot/core/       bars.py, indicators.py, sessions.py, swings.py, structure.py,
                 liquidity.py, sweeps.py, displacement.py, fvg.py, mss.py
-bot/research/   sweep_study.py (H2), displacement_study.py (SPEC 10.6),
-                funnel.py (SPEC 11.7), marginal_value.py (H5)
-scripts/        build_dataset.py, phase{1,5,6,7,8,9}_report.py,
+bot/research/   stats.py (shared primitives), sweep_study.py (H2),
+                displacement_study.py (SPEC 10.6), funnel.py (SPEC 11.7),
+                marginal_value.py (H5), fvg_study.py (SPEC 12.6)
+scripts/        build_dataset.py, phase{1,5,6,7,8,9,10}_report.py,
                 marginal_value_report.py, regen_golden.py
-tests/          309 tests + tests/golden/structure_h4.json
+tests/          349 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -154,7 +157,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-010 record corrections and findings from each phase's implementation.
+D-004 through D-011 record corrections and findings from each phase's implementation.
 
 ---
 
@@ -184,6 +187,10 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 18 | **A forward return is a function of `(break bar, direction)` and nothing else.** Candidates sharing both contribute the identical number, so the H5 study collapses them — 640 raw CHoCH become 315 observations. Leaving them in made h=1 read EQUIVALENT when it is UNDERPOWERED (D-010 §3). |
 | 19 | **`UNDERPOWERED` is not `EQUIVALENT`.** H5 is falsified by a *negative*, so only a CI sitting inside the declared margin licenses "decoration". A two-way verdict reports this fixture as a null result on the methodology's central claim. |
 | 20 | **The H5 equivalence margin (0.25 ATR) is declared, not derived**, and fixed before any result was read. Changing it after seeing a verdict selects the answer (§10.2). |
+| 21 | **`Fvg.proximal` is `zone_high` for a bullish gap** — the edge price reaches first. SPEC 12.1's table says the opposite and is wrong; 12.2 and 12.4 agree with the code. Entry model C's limit price depends on it (D-011 §1). |
+| 22 | **FVG touch is range INTERSECTION, not SPEC 12.2's one-sided inequality.** One-sided made `INVALIDATED` structurally unreachable and counted every gap-over as a fill (D-011 §2). |
+| 23 | **Use `Fvg.status_at(bar)`, never `Fvg.status`, to ask what was available at a past bar.** The field holds the end-of-run value; reading it is invisible lookahead (D-011 §3). |
+| 24 | **`track_fvgs` returns copies.** Detection output is shared with the displacement engine, which must not depend on whether the tracker ran (D-011 §3). |
 
 ---
 
@@ -204,6 +211,7 @@ All four are the same mistake at different scales, and all four are now pinned b
   "mildly anti-conservative" — the same mistake a third time. The report now computes
   the standard error and states the deviation **in sigma**, which turned out to matter:
   after the duplicate-row fix the real deviation was 2.5 sigma and genuine.
+  `stats.calibration_sigma` now exists so no study can report a rate without it.
 
 **A statistic not compared against what noise alone would produce is not a finding.**
 
@@ -234,6 +242,11 @@ no participants and no structure, so:
 - **The H5 study validates its own instrument and nothing else.** A `DIFFERENT` verdict
   on this fixture would mean it is broken. Its power arithmetic is the one output that
   transfers (§3a).
+- **Phase 10's FVG edge test is in the same position**, with one difference worth
+  carrying: its population is ~18x larger, so unlike H5 it will be **answerable at every
+  horizon on real data**. Its fill-rate curve is the number most likely to fall when real
+  bars arrive — a random walk returns to a local extreme readily and a trending market
+  may not.
 
 `bot/data/synthetic.py` says so in its own docstring and is never used to produce a
 strategy result.
@@ -248,12 +261,17 @@ and one of its findings is that part of it may not be answerable on real data ei
 (§3a). So the design stands and the next phases are the ones that turn an event into a
 trade.
 
-### Phase 10 → 13 → 14, building toward a backtest
+### Phase 11 → 13 → 14, building toward a backtest
 
-FVG lifecycle (SPEC 12.2 — touch, PARTIAL, MITIGATED, INVALIDATED, EXPIRED, plus 12.3's
-selection rule), order blocks, setup assembly, entries, risk, then the engine. The
-alternative ordering — run the H5 marginal-value test first — has been taken, which is
-why it is no longer listed here.
+**Phase 11 is the Order Block definition bake-off** (SPEC 13, gate: "definition bake-off
+with the agreement matrix"). SPEC 13.1 opens by stating the definitional problem outright
+and 13.2 lists four candidate definitions — so unlike every phase so far, the deliverable
+is a *choice between rules*, made on measured agreement rather than on which reads best.
+Expect it to need the same pre-registration discipline as `reference_mode` did in Phase 9:
+four candidates compared is four chances, and picking the winner by outcome is what
+§10.2 forbids.
+
+Then Phase 12 (entries), 13 (risk), 14 (the engine).
 
 ### Still blocking real results
 

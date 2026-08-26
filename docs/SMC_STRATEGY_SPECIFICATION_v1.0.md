@@ -1680,10 +1680,18 @@ Over three consecutive bars `(n−2, n−1, n)`:
 
 ```
 BULLISH FVG  ⟺  L_n > H_(n−2)
-                zone = [ H_(n−2) , L_n ]        proximal edge = H_(n−2)   distal = L_n
+                zone = [ H_(n−2) , L_n ]        proximal edge = L_n        distal = H_(n−2)
 BEARISH FVG  ⟺  H_n < L_(n−2)
-                zone = [ H_n , L_(n−2) ]        proximal edge = L_(n−2)   distal = H_n
+                zone = [ H_n , L_(n−2) ]        proximal edge = H_n        distal = L_(n−2)
 ```
+
+**The proximal/distal labels above were inverted in v1.0 and are corrected here (D-011
+§1).** Proximal means the edge price reaches *first* on returning to the zone. A bullish
+gap forms with price above it, so a return meets `L_n` (= `zone_high`) first — which is
+what §12.2's touch rule (`bullish: L ≤ zone_high`) and §12.4's worked example (*"buy
+limit at 1.08420 (proximal edge)"*, where 1.08420 is `L_n`) both already said. Entry
+model C places its limit at the proximal edge, so the inverted label would have shipped
+as a systematically wrong fill price.
 
 - `size = |zone_high − zone_low|`; required `size ≥ fvg.min_size_atr × ATR_ref(n)`
   (default **0.10**) **and** `size ≥ fvg.min_size_pips` (default 0.5 pips — a spread guard).
@@ -1704,12 +1712,26 @@ FVG { id, symbol, timeframe, direction, zone_high, zone_low, ce, size, size_atr,
 ```
 
 ```
-touch      bullish: L ≤ zone_high        bearish: H ≥ zone_low
+touch      the bar's range INTERSECTS the zone:  L ≤ zone_high  ∧  H ≥ zone_low
 PARTIAL    price entered the zone but not past CE
 MITIGATED  fvg.mitigation_mode reached — {touch, ce, full}, default ce
 INVALIDATED bullish: close < zone_low − fvg.invalidate_buffer_atr × ATR_ref   (default 0.0)
 EXPIRED    age_bars > fvg.max_age_bars   (default 30 bars of its own TF)
 ```
+
+**The touch rule was one-sided in v1.0 and is corrected here (D-011 §2).** As written
+(`bullish: L ≤ zone_high` alone) it is right whenever price returns from the gap's own
+side, and wrong for the case §12.5 describes: a bar opening *below* a bullish zone
+satisfies it while never having traded inside. That made `INVALIDATED` **unreachable
+entirely** — a bullish close below `zone_low` implies a low below `zone_low`, which is at
+or past every mitigation target, so mitigation always won the race and every gap-over was
+counted as a fill. Requiring intersection agrees with the one-sided rule everywhere the
+one-sided rule is right, and differs only in §12.5's case.
+
+Mitigation is also tested **before** invalidation within a bar, so a bar that trades
+through the zone to its mitigation threshold and then closes beyond it is MITIGATED: the
+gap was used, wherever the bar happened to close. Invalidation is for the gap-over case,
+where it never was.
 
 `fvg.mitigation_mode = ce` (default) means a gap counts as used once price reaches its
 midpoint. `touch` is the strictest (any tag consumes it), `full` the loosest. This choice
@@ -1725,8 +1747,11 @@ Entry model C uses the FVG selected by `fvg.selection`:
 | `largest` | Largest by `size_atr` |
 | `nearest` | Closest proximal edge to current price |
 
-Qualifying = direction matches the setup, `status = UNMITIGATED`, formed within the
-displacement leg `[a..b]` (§10.1), `size` above minimum. If none qualifies, entry model C
+Qualifying = direction matches the setup, `status = UNMITIGATED` **as of the bar the
+setup confirms on**, formed within the displacement leg `[a..b]` (§10.1), `size` above
+minimum. The status qualifier is time-varying and must be read as of that bar (D-011 §3):
+a gap mitigated later was still available at the moment of selection, and reading a
+single end-of-run status field would be lookahead. If none qualifies, entry model C
 cannot arm and the setup falls back per `entry.fallback_model` (§15.7) or is invalidated
 (`NO_FVG_AVAILABLE`).
 

@@ -234,8 +234,8 @@ def test_degenerate_inputs_return_nan_rather_than_raising():
     empty = np.asarray([])
     one = np.asarray([0.5])
     assert np.isnan(MV.minimum_detectable_effect(one, empty))
-    assert np.isnan(MV.required_n(one, empty))
-    assert np.isnan(MV._permutation_p(one, empty, 10, np.random.default_rng(0)))
+    assert np.isnan(MV.required_n(one, empty, MV.EQUIVALENCE_MARGIN_ATR))
+    assert np.isnan(MV.permutation_p(one, empty, 10, np.random.default_rng(0)))
     assert np.isnan(MV.null_calibration(one, empty))
 
 

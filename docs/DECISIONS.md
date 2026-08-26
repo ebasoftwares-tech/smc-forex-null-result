@@ -873,3 +873,151 @@ is no R. Inventing a stop distance to fill the gap would make the answer a prope
 that invention. Reported as **DEFERRED**, and worth revisiting after Phase 12 — R-based
 expectancy may resolve at a smaller sample than raw forward returns do, since a stop
 truncates the left tail that drives the variance in the table above.
+
+---
+
+## D-011 — Two spec corrections and a shared-statistics extraction, from implementing Phase 10
+
+| | |
+|---|---|
+| **Date** | 2026-08-25 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 10 implementation (FVG lifecycle, selection, standalone edge test) |
+
+### 1. SPEC 12.1 labels the proximal and distal edges backwards
+
+Proximal means the edge price reaches **first** on returning to the zone. A bullish gap
+forms with price above it (`L_n > H_(n−2)`), so a return meets `L_n` = `zone_high` first.
+
+§12.1's table says the proximal edge is `H_(n−2)` = `zone_low`. Two other places in the
+same section say the opposite, and both describe *behaviour* rather than naming:
+
+- §12.2's touch rule, `bullish: L ≤ zone_high` — the zone is entered when the low reaches
+  `zone_high`, so that is the first edge.
+- §12.4's worked example: *"Entry model C would place a buy limit at 1.08420 (proximal
+  edge)"*, where the zone is `[1.08310, 1.08420]` and 1.08420 is `L_n` = `zone_high`.
+
+**Resolution: §12.1's labels are corrected in place.** This is not cosmetic. Entry model
+C places its limit at the proximal edge, so the inverted label makes every model-C entry
+wait for a pullback to the *far* side of the gap — a systematically deeper fill, a
+different stop distance, and a materially different fill rate. It would have shipped as a
+wrong price in Phase 12 rather than as a visible error.
+
+`Fvg.proximal` / `.distal` followed §12.1 and were inverted. **Two committed tests
+encoded the inverted version** (`test_fvg_geometry_ce_and_edges`,
+`test_bearish_fvg_mirrors`, both from Phase 8) and were corrected with a comment naming
+this decision, so the flip is not mistaken for a regression later.
+
+### 2. SPEC 12.2's touch rule made `INVALIDATED` unreachable
+
+The rule is written one-sided — `bullish: L ≤ zone_high`, `bearish: H ≥ zone_low`. That
+is correct whenever price returns to the gap from its own side, and wrong for the case
+§12.5 explicitly describes:
+
+> *"Price gaps over the entire zone without touching — zone is **not** mitigated (never
+> touched) but is INVALIDATED if the close is beyond it."*
+
+A bar that opens below a bullish zone satisfies `L ≤ zone_high` while never having traded
+inside it. So under the one-sided rule a gap-over registers as a touch, which mitigates.
+
+**And that made invalidation impossible, not merely rare.** For a bullish gap,
+invalidation needs `close < zone_low`; `close ≥ low`, so `low < zone_low`; and `zone_low`
+is at or past *every* mitigation target (`proximal`, `ce`, `distal` are all ≥ `zone_low`).
+Mitigation is tested first, so it always won. Measured: **0 INVALIDATED across 707 gaps**
+on the fixture, and structurally 0 on any input.
+
+**Resolution: touch is range intersection** — `L ≤ zone_high ∧ H ≥ zone_low`. It agrees
+with the one-sided rule everywhere the one-sided rule is right (a bar arriving from above
+has `H ≥ zone_low` trivially) and differs only in §12.5's case, so it generalises rather
+than replaces. Mitigation additionally requires the touch.
+
+The cost of leaving it: **every gap-over counted as a fill**, inflating the fill-rate
+curve that §12.6 asks for — Phase 10's own deliverable.
+
+**The synthetic fixture cannot exercise this.** H4 bars from `bot/data/synthetic.py` are
+continuous, and weekend-gap FVGs are excluded at creation
+(`fvg.exclude_weekend_gaps`, default true), so INVALIDATED stays 0 in the gate report for
+a legitimate reason. It is covered by a constructed test
+(`test_a_gap_over_is_INVALIDATED_not_MITIGATED`) and by nothing else, which is exactly the
+kind of transition that would otherwise reach real data untested.
+
+### 3. Status is a function of time, and the object looks like it holds one
+
+`Fvg.status` is a single mutable field, so the natural way to ask "was this gap available
+at bar `i`?" is to read it — which returns the **end-of-run** value and would let a gap
+mitigated at `i + 5` look unavailable at `i`. Lookahead, and invisible.
+
+`status_at(bar)` is now the accessor callers use, backed by stored transition indices, and
+`select_fvg` reads availability through it at the setup bar. §12.3's "`status =
+UNMITIGATED`" is amended in place to say *as of the bar the setup confirms on*.
+
+`track_fvgs` also works on **copies**. Detection output is shared with the displacement
+engine (SPEC 10.2), and a tracker that mutated it in place would make the displacement
+filter's behaviour depend on whether anyone had run the tracker first.
+
+### 4. Shared statistics extracted to `bot/research/stats.py`
+
+Phase 10's edge test would have been the **third** copy of the same percentile bootstrap
+(`sweep_study.py`, `marginal_value.py`). Two copies of an interval method is how two
+studies quietly start answering the same question differently, which matters more here
+than in ordinary code because `BACKTEST_PROTOCOL.md` §6 needs the falsification suite to
+be comparable to itself.
+
+Moved: bootstrap CI, permutation p, MDE, required-n, Benjamini-Hochberg, tercile
+stratification, `Group`, the three-way `Verdict`, and both controls
+(`null_calibration`, `detects_effect`). Added `calibration_sigma`, because reporting a
+false-positive rate without its standard error is what produced three sub-2-sigma
+misreadings in this project already (D-007 §5, D-008 §3, D-010 §5).
+
+**Verified by regenerating `reports/phase7_gate.md` and `reports/marginal_value.md`
+before and after: byte-identical.** Call order into the shared RNG was preserved
+deliberately, since a reordered bootstrap draw would move every interval without changing
+any logic.
+
+One deliberate interface change: `required_n` takes its margin explicitly rather than
+defaulting. A shared default margin would let two studies inherit a number neither
+declared, and each study's margin is a pre-registered judgement (§10.2).
+
+### 5. The FVG concept is testable at a scale H5 is not
+
+Phase 10's gate is SPEC 12.6's standalone edge test. On the fixture it returns
+**UNDECIDED** — EQUIVALENT at +1 and +3, UNDERPOWERED at +6 and +12 — which on a random
+walk is a working instrument reporting the absence it should.
+
+The durable finding is the power comparison:
+
+| Study | Events needed (longest horizon) | In-sample universe projects | Answerable? |
+|---|---:|---:|---|
+| H5 (MSS vs CHoCH-not-MSS) | ~800 | ~427 | **no** |
+| FVG edge test | 1,306 | 7,613 | **yes, at every horizon** |
+
+The FVG population is about **18×** larger, because every gap counts rather than only
+those surviving the sweep-to-MSS funnel. Whatever real data says about FVGs, this study
+will be able to hear it — which is not true of H5, and is worth knowing before either is
+run for real.
+
+Null calibration also lands much closer to nominal here (1.6 sigma, against H5's 2.5): the
+percentile bootstrap under-covers with a few dozen heavy-tailed observations, and this
+study has hundreds rather than dozens. Same method, different sample size, and the
+calibration step is what makes the difference visible rather than assumed.
+
+### 6. Finding: the mitigation mode moves availability, not whether price returned
+
+Ablation over `fvg.mitigation_mode`:
+
+| Mode | Mitigated | Expired | Touch events | h=1 diff |
+|---|---:|---:|---:|---:|
+| `touch` | 591 | 114 | 571 | +0.0136 |
+| `ce` (default) | 551 | 153 | 571 | +0.0136 |
+| `full` | 511 | 193 | 571 | +0.0136 |
+
+The mitigated/expired split moves substantially — `touch` consumes a gap on any tag,
+`full` needs a complete traverse — while the touch event count and the edge-test result
+are **identical to the digit** across all three modes.
+
+That is correct, and worth recording precisely because it looks like a bug. The first
+touch happens at the same bar whatever the mode is; the mode only governs how long a gap
+stays *available* to entry model C afterwards. So it has no bearing on whether price came
+back, and the edge test — which anchors on the first touch — cannot move. Anyone reading
+this ablation as evidence about the edge would be reading it wrong, and anyone reading the
+identical columns as a copy-paste error would be too.

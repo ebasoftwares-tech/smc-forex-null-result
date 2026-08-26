@@ -118,7 +118,7 @@ bot/
     liquidity.py       §8 level sources, lifecycle, merge, rank                [Phase 6]
     sweeps.py          §9 penetration + reclaim, clusters, failures            [Phase 7]
     displacement.py    §10 leg-based drive test, fixed origin              [Phase 8]
-    fvg.py             §12.1 detection (lifecycle is Phase 10)            [Phase 8]
+    fvg.py             §12 detection, lifecycle, selection            [Phase 8/10]
     mss.py             §11 CHoCH reference selection, MSS confirmation    [Phase 9]
     order_blocks.py    §13
   strategy/
@@ -143,6 +143,8 @@ bot/
     sweep_study.py     §9.7 forward-return study of sweeps (H2)               [Phase 7]
     displacement_study.py  §10.6 threshold distribution + rejection rates  [Phase 8]
     funnel.py          §11.7 the sweep -> CHoCH -> MSS funnel and its gate  [Phase 9]
+    fvg_study.py       §12.6 standalone FVG edge test                    [Phase 10]
+    stats.py           shared bootstrap / power / verdict primitives     [Phase 10]
     marginal_value.py  §6.2 MSS vs CHoCH-not-MSS (tests H5)                  [study]
   reporting/
     charts.py          renders from events.jsonl only

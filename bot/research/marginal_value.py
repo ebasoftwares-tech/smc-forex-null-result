@@ -57,7 +57,6 @@ that invention.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from enum import Enum
 from typing import Sequence
 
 import numpy as np
@@ -66,6 +65,21 @@ from bot.core.bars import BarSeries, from_epoch_s
 from bot.core.displacement import Direction
 from bot.core.indicators import atr_ref
 from bot.core.mss import SetupCandidate
+from bot.research.stats import (
+    ALPHA,
+    POWER,
+    Group,
+    Verdict,
+    benjamini_hochberg,
+    bootstrap_diff_ci,
+    detects_effect,
+    minimum_detectable_effect,
+    null_calibration,
+    permutation_p,
+    required_n,
+    terciles,
+    verdict_for,
+)
 
 #: SPEC 6.9 names these three horizons explicitly.
 DEFAULT_HORIZONS = (1, 4, 12)
@@ -82,51 +96,6 @@ DEFAULT_HORIZONS = (1, 4, 12)
 #: taken.  Every result also reports its own minimum detectable effect, so a reader who
 #: disagrees can substitute their own margin without re-running the study.
 EQUIVALENCE_MARGIN_ATR = 0.25
-
-#: Two-sided alpha and the power target for the minimum-detectable-effect arithmetic.
-ALPHA = 0.05
-POWER = 0.80
-_Z_ALPHA = 1.959963985  # Phi^-1(0.975)
-_Z_POWER = 0.841621234  # Phi^-1(0.80)
-
-
-class Verdict(str, Enum):
-    DIFFERENT = "DIFFERENT"
-    EQUIVALENT = "EQUIVALENT"
-    UNDERPOWERED = "UNDERPOWERED"
-    NO_DATA = "NO_DATA"
-
-
-@dataclass(frozen=True)
-class Group:
-    label: str
-    returns: np.ndarray
-
-    @property
-    def n(self) -> int:
-        return int(len(self.returns))
-
-    @property
-    def mean(self) -> float:
-        return float(self.returns.mean()) if self.n else float("nan")
-
-    @property
-    def median(self) -> float:
-        return float(np.median(self.returns)) if self.n else float("nan")
-
-    @property
-    def sd(self) -> float:
-        return float(self.returns.std(ddof=1)) if self.n > 1 else float("nan")
-
-    @property
-    def win_rate(self) -> float:
-        """Share of events whose signed forward return is positive.
-
-        Reported next to the mean because a heavy-tailed distribution can have a mean
-        pulled entirely by a handful of events, and the two disagreeing is itself
-        informative.
-        """
-        return float((self.returns > 0).mean()) if self.n else float("nan")
 
 
 @dataclass(frozen=True)
@@ -161,13 +130,9 @@ class Comparison:
 
     @property
     def verdict(self) -> Verdict:
-        if not np.isfinite(self.ci_low) or self.mss.n < 2 or self.not_mss.n < 2:
-            return Verdict.NO_DATA
-        if self.ci_excludes_zero:
-            return Verdict.DIFFERENT
-        if self.ci_within_margin:
-            return Verdict.EQUIVALENT
-        return Verdict.UNDERPOWERED
+        return verdict_for(
+            self.ci_low, self.ci_high, self.margin, self.mss.n, self.not_mss.n
+        )
 
     def describe(self) -> str:
         v = self.verdict
@@ -249,91 +214,6 @@ def signed_forward_return(
     return sign * (float(series.close[j]) - float(series.close[bar])) / float(a)
 
 
-def _bootstrap_diff_ci(
-    a: np.ndarray, b: np.ndarray, n_boot: int, rng: np.random.Generator, alpha: float = ALPHA
-) -> tuple[float, float]:
-    """Percentile bootstrap CI on ``mean(a) - mean(b)``."""
-    if len(a) < 2 or len(b) < 2:
-        return (float("nan"), float("nan"))
-    ia = rng.integers(0, len(a), size=(n_boot, len(a)))
-    ib = rng.integers(0, len(b), size=(n_boot, len(b)))
-    diffs = a[ia].mean(axis=1) - b[ib].mean(axis=1)
-    lo, hi = np.quantile(diffs, [alpha / 2, 1 - alpha / 2])
-    return float(lo), float(hi)
-
-
-def _permutation_p(
-    a: np.ndarray, b: np.ndarray, n_perm: int, rng: np.random.Generator
-) -> float:
-    """Two-sided permutation p-value for a difference in means.
-
-    A permutation test rather than a t-test because forward-return distributions are
-    heavy-tailed and ``n_mss`` is small -- exactly the regime where the normal
-    approximation is least trustworthy.  The ``+1`` convention keeps p strictly positive,
-    so a p of zero is never reported from a finite number of shuffles.
-    """
-    if len(a) < 2 or len(b) < 2:
-        return float("nan")
-    obs = abs(a.mean() - b.mean())
-    pool = np.concatenate([a, b])
-    n_a = len(a)
-    count = 0
-    for _ in range(n_perm):
-        rng.shuffle(pool)
-        if abs(pool[:n_a].mean() - pool[n_a:].mean()) >= obs:
-            count += 1
-    return (count + 1) / (n_perm + 1)
-
-
-def minimum_detectable_effect(a: np.ndarray, b: np.ndarray) -> float:
-    """Smallest true difference this sample could detect at ALPHA with POWER.
-
-    The number that separates "no effect" from "no power", and the reason it is computed
-    for every row rather than mentioned once in prose.
-    """
-    if len(a) < 2 or len(b) < 2:
-        return float("nan")
-    va, vb = a.var(ddof=1), b.var(ddof=1)
-    pooled = np.sqrt(((len(a) - 1) * va + (len(b) - 1) * vb) / (len(a) + len(b) - 2))
-    se = pooled * np.sqrt(1 / len(a) + 1 / len(b))
-    return float((_Z_ALPHA + _Z_POWER) * se)
-
-
-def required_n(a: np.ndarray, b: np.ndarray, margin: float = EQUIVALENCE_MARGIN_ATR) -> float:
-    """MSS events needed to resolve ``margin``, holding the observed group-size ratio.
-
-    Feeds straight back into the Phase 9 gate: if this exceeds what the in-sample period
-    can produce, H5 is not answerable on this design however the backtest turns out.
-    """
-    if len(a) < 2 or len(b) < 2 or margin <= 0:
-        return float("nan")
-    va, vb = a.var(ddof=1), b.var(ddof=1)
-    pooled = np.sqrt(((len(a) - 1) * va + (len(b) - 1) * vb) / (len(a) + len(b) - 2))
-    ratio = len(b) / len(a)
-    return float(((_Z_ALPHA + _Z_POWER) ** 2) * (pooled**2) * (1 + 1 / ratio) / (margin**2))
-
-
-def benjamini_hochberg(p_values: Sequence[float], q: float = 0.10) -> list[float]:
-    """BH-adjusted p-values (`BACKTEST_PROTOCOL.md` §5.6 uses q = 0.10).
-
-    Applied across the horizons because three horizons on one population are three
-    chances to find something, and Phase 7 is the standing evidence in this project that
-    those chances get taken.
-    """
-    finite = [(i, p) for i, p in enumerate(p_values) if np.isfinite(p)]
-    out = [float("nan")] * len(p_values)
-    if not finite:
-        return out
-    finite.sort(key=lambda t: t[1])
-    m = len(finite)
-    prev = 1.0
-    for rank in range(m, 0, -1):
-        i, p = finite[rank - 1]
-        prev = min(prev, p * m / rank)
-        out[i] = float(min(1.0, prev))
-    return out
-
-
 # ---------------------------------------------------------------- sample builders
 
 
@@ -346,18 +226,6 @@ class Event:
     is_mss: bool
     hour: int
     tercile: int
-
-
-def _terciles(values: np.ndarray) -> np.ndarray:
-    out = np.full(len(values), -1, dtype=np.int64)
-    ok = np.isfinite(values)
-    if ok.sum() < 3:
-        return out
-    q1, q2 = np.quantile(values[ok], [1 / 3, 2 / 3])
-    out[ok & (values <= q1)] = 0
-    out[ok & (values > q1) & (values <= q2)] = 1
-    out[ok & (values > q2)] = 2
-    return out
 
 
 def events_from(
@@ -388,7 +256,7 @@ def events_from(
     sweeps from different clusters can still break on the same bar and produce the same
     number.
     """
-    terc = _terciles(atr)
+    terc = terciles(atr)
     by_key: dict[tuple[int, Direction], bool] = {}
     for c in candidates:
         if not c.is_choch or c.choch_bar is None:
@@ -481,7 +349,7 @@ def _compare(
     other = _returns(series, events, horizon, atr, False)
     every = np.concatenate([mss, other]) if len(mss) or len(other) else np.asarray([])
 
-    lo, hi = _bootstrap_diff_ci(mss, other, bootstrap, rng)
+    lo, hi = bootstrap_diff_ci(mss, other, bootstrap, rng)
     return Comparison(
         horizon=horizon,
         sample=sample,
@@ -491,7 +359,7 @@ def _compare(
         diff=float(mss.mean() - other.mean()) if len(mss) and len(other) else float("nan"),
         ci_low=lo,
         ci_high=hi,
-        p_value=_permutation_p(mss, other, permutations, rng),
+        p_value=permutation_p(mss, other, permutations, rng),
         mde=minimum_detectable_effect(mss, other),
         required_mss_n=required_n(mss, other, margin),
         margin=margin,
@@ -608,7 +476,7 @@ def pool_studies(studies: Sequence[MarginalValueStudy]) -> MarginalValueStudy:
             [c.not_mss.returns for s in studies for c in s.comparisons
              if c.sample == sample and c.horizon == h] or [np.asarray([])]
         )
-        lo, hi = _bootstrap_diff_ci(mss, oth, out.bootstrap, rng)
+        lo, hi = bootstrap_diff_ci(mss, oth, out.bootstrap, rng)
         out.comparisons.append(
             Comparison(
                 horizon=h,
@@ -619,9 +487,9 @@ def pool_studies(studies: Sequence[MarginalValueStudy]) -> MarginalValueStudy:
                 diff=float(mss.mean() - oth.mean()) if len(mss) and len(oth) else float("nan"),
                 ci_low=lo,
                 ci_high=hi,
-                p_value=_permutation_p(mss, oth, out.permutations, rng),
+                p_value=permutation_p(mss, oth, out.permutations, rng),
                 mde=minimum_detectable_effect(mss, oth),
-                required_mss_n=required_n(mss, oth),
+                required_mss_n=required_n(mss, oth, EQUIVALENCE_MARGIN_ATR),
                 margin=first.comparisons[0].margin if first.comparisons else EQUIVALENCE_MARGIN_ATR,
             )
         )
@@ -632,39 +500,3 @@ def pool_studies(studies: Sequence[MarginalValueStudy]) -> MarginalValueStudy:
 # ------------------------------------------------------------------- the controls
 
 
-def null_calibration(
-    study_returns_mss: np.ndarray,
-    study_returns_other: np.ndarray,
-    *,
-    trials: int = 200,
-    bootstrap: int = 1000,
-    seed: int = 7,
-) -> float:
-    """False-positive rate when the MSS label is shuffled onto the same returns.
-
-    Under a shuffled label the true difference is exactly zero, so a DIFFERENT verdict is
-    a false positive by construction and the rate should land near ``ALPHA``.  This is
-    Phase 7's lesson turned into a calibration: a test whose CI method is too narrow
-    would show up here as a rate well above 5%, and no amount of reading the code would.
-    """
-    pool = np.concatenate([study_returns_mss, study_returns_other])
-    n_mss = len(study_returns_mss)
-    if n_mss < 2 or len(pool) - n_mss < 2:
-        return float("nan")
-    rng = np.random.default_rng(seed)
-    hits = 0
-    for _ in range(trials):
-        rng.shuffle(pool)
-        lo, hi = _bootstrap_diff_ci(pool[:n_mss], pool[n_mss:], bootstrap, rng)
-        if np.isfinite(lo) and (lo > 0 or hi < 0):
-            hits += 1
-    return hits / trials
-
-
-def detects_effect(
-    mss: np.ndarray, other: np.ndarray, shift: float, *, bootstrap: int = 2000, seed: int = 11
-) -> bool:
-    """Whether a known effect of ``shift`` ATR added to the MSS group is detected."""
-    rng = np.random.default_rng(seed)
-    lo, hi = _bootstrap_diff_ci(mss + shift, other, bootstrap, rng)
-    return bool(np.isfinite(lo) and (lo > 0 or hi < 0))

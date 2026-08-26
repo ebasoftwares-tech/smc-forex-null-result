@@ -30,6 +30,7 @@ from bot.core.swings import detect_swings  # noqa: E402
 from bot.data.resample import resample  # noqa: E402
 from bot.data.synthetic import generate  # noqa: E402
 from bot.research import marginal_value as MV  # noqa: E402
+from bot.research.stats import calibration_interval, calibration_sigma  # noqa: E402
 
 UTC = timezone.utc
 OUT = Path("reports/marginal_value.md")
@@ -104,7 +105,11 @@ def main() -> int:
 
     print("controls ...", flush=True)
     h1 = primary[0]
-    fpr = MV.null_calibration(h1.mss.returns, h1.not_mss.returns, trials=400, bootstrap=1000)
+    CAL_TRIALS = 3000
+    fpr = MV.null_calibration(
+        h1.mss.returns, h1.not_mss.returns, trials=CAL_TRIALS, bootstrap=600
+    )
+    fpr_lo, fpr_hi = calibration_interval(fpr, CAL_TRIALS)
     mde_h1 = h1.mde
     control_grid = [
         (shift, MV.detects_effect(h1.mss.returns, h1.not_mss.returns, shift))
@@ -145,7 +150,7 @@ def main() -> int:
         (
             "Null calibration lands near alpha",
             0.0 < fpr < 0.12,
-            f"{fpr:.1%} false positives over 400 label shuffles (alpha {MV.ALPHA:.0%})",
+            f"{fpr:.1%} over {CAL_TRIALS:,} label shuffles, CI [{fpr_lo:.1%}, {fpr_hi:.1%}] (alpha {MV.ALPHA:.0%})",
         ),
         (
             "Multiple-testing correction applied across horizons",
@@ -319,11 +324,16 @@ def main() -> int:
     w("zero, so every `DIFFERENT` verdict under a shuffle is a false positive by")
     w("construction.")
     w("")
-    trials = 400
-    se = (MV.ALPHA * (1 - MV.ALPHA) / trials) ** 0.5
-    sigma = abs(fpr - MV.ALPHA) / se
-    w(f"- False-positive rate over {trials} shuffles: **{fpr:.1%}** against alpha of {MV.ALPHA:.0%}")
-    w(f"- Standard error on that rate at {trials} trials: {se:.1%}, so the deviation is **{sigma:.1f} sigma**")
+    sigma = calibration_sigma(fpr, CAL_TRIALS)
+    w(f"- False-positive rate over {CAL_TRIALS:,} shuffles: **{fpr:.1%}** against alpha of {MV.ALPHA:.0%}")
+    w(f"- 95% Wilson interval: **[{fpr_lo:.1%}, {fpr_hi:.1%}]** — contains alpha: {'yes' if fpr_lo <= MV.ALPHA <= fpr_hi else 'no'}")
+    w(f"- Deviation: **{sigma:.1f} sigma**")
+    w("")
+    w(f"**This figure was corrected in Phase 11.** It ran on 400 shuffles and read 7.8%,")
+    w("which was written up as clear anti-conservatism. At 400 trials the standard error")
+    w("on the rate is about 1.1 points — the same size as the effect — and that draw was")
+    w("high. The direction survives at a proper trial count; the magnitude does not. See")
+    w("D-012 §4.")
     w("")
     if sigma < 2.0:
         w("**Calibrated.** The deviation is inside what 400 shuffles can resolve, so there")

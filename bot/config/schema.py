@@ -551,6 +551,56 @@ class InvalidateConfig(Frozen):
     )
 
 
+class ObConfig(Frozen):
+    """SPEC 13 -- Order Blocks.
+
+    ``definition`` is the field this whole section exists for.  SPEC 13.1 opens by
+    stating that "the last opposing candle before a move that breaks structure" is
+    under-specified in three separate places, and that different choices produce zones
+    tens of pips apart -- which for a stop-based strategy is the difference between a win
+    and a loss.  So the four candidates are **four pre-registered variants**, not a knob,
+    and SPEC 13.8 requires the agreement matrix to be reported alongside performance
+    precisely so that near-identical variants are not counted as independent tests.
+    """
+
+    definition: Literal[
+        "last_opposing", "last_down_close_before_break", "extreme_origin", "breaker"
+    ] = Field(
+        "last_opposing",
+        description=(
+            "ABLATION -- four separately pre-registered variants (OB-A/B/C/D), not a "
+            "sweep. SPEC 13.2. Report the agreement matrix with any comparison between "
+            "them (SPEC 13.8): variants that pick the same bar are not two hypotheses."
+        ),
+    )
+    zone_mode: Literal["full_range", "body", "wick_to_open"] = Field(
+        "full_range",
+        description="ABLATION {full_range, body, wick_to_open}. SPEC 13.3.",
+    )
+    max_lookback_bars: int = Field(
+        10,
+        ge=1,
+        description=(
+            "FROZEN. SPEC 13.2. Bounds the search before the displacement leg. Without "
+            "it OB-A degenerates into 'the last red candle', which always exists."
+        ),
+    )
+    max_distance_atr: float = Field(
+        3.0,
+        gt=0.0,
+        description="FROZEN. SPEC 13.4 constraint 4 -- an untradeable stop is rejected up front.",
+    )
+    max_age_bars: int = Field(30, ge=1, description="FROZEN. SPEC 13.4 constraint 5.")
+    invalidate_closes: int = Field(
+        1,
+        ge=1,
+        description=(
+            "FROZEN. SPEC 13.5. A bullish OB whose distal edge is closed through is "
+            "invalid: the orders it represented have been run."
+        ),
+    )
+
+
 class AppConfig(Frozen):
     """The fully resolved configuration.  Hashed to produce ``config_hash``."""
 
@@ -567,6 +617,7 @@ class AppConfig(Frozen):
     disp: DisplacementConfig = DisplacementConfig()
     choch: ChochConfig = ChochConfig()
     invalidate: InvalidateConfig = InvalidateConfig()
+    ob: ObConfig = ObConfig()
     fvg: FvgConfig = FvgConfig()
     eq: EqualLevelsConfig = EqualLevelsConfig()
     range: RangeConfig = RangeConfig()

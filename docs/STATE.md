@@ -1,6 +1,6 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-25, after Phase 10.
+Last updated: 2026-08-25, after Phase 11.
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -27,15 +27,15 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 
 | | |
 |---|---|
-| **Phases complete** | 1, 5, 6, 7, 8, 9, 10 |
-| **Tests** | 349, all passing |
-| **Commits** | 8, on `master` |
+| **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11 |
+| **Tests** | 395, all passing |
+| **Commits** | 9, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 349 tests, ~23s
+.venv/Scripts/python.exe -m pytest tests/          # 395 tests, ~26s
 .venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
-.venv/Scripts/python.exe scripts/phase10_report.py  # the Phase 10 FVG gate
+.venv/Scripts/python.exe scripts/phase11_report.py  # the Phase 11 OB bake-off
 .venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
 ```
 
@@ -51,6 +51,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 9 | CHoCH reference selection, MSS confirmation, **the funnel** | `reports/phase9_gate.md` | 10/10 — but see §3, the gate passes on a *projection* |
 | — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, run out of order) | `reports/marginal_value.md` | 8/8 — instrument validated, **H5 open** |
 | 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 — two spec corrections, see D-011 |
+| 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 — **four variants are worth 1.77 tests**, see D-012 |
 
 **Phase 5 was built before 2–4 deliberately**: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
@@ -58,8 +59,8 @@ mostly configuration.
 
 ### Not started
 
-Phases 2–4 (Monthly/Weekly/Daily bias), 11–17 (order blocks, entries, risk, backtest,
-charts, paper, live).
+Phases 2–4 (Monthly/Weekly/Daily bias), 12–17 (entries, risk, backtest, charts,
+paper, live).
 
 ---
 
@@ -131,13 +132,15 @@ bot/config/     schema.py (every parameter, with FROZEN/ABLATION/TUNABLE in its
                 description), loader.py (layering + config_hash), defaults.yaml
 bot/data/       calendar.py, resample.py, quality.py, ingest.py, synthetic.py
 bot/core/       bars.py, indicators.py, sessions.py, swings.py, structure.py,
-                liquidity.py, sweeps.py, displacement.py, fvg.py, mss.py
+                liquidity.py, sweeps.py, displacement.py, fvg.py, mss.py,
+                order_blocks.py
 bot/research/   stats.py (shared primitives), sweep_study.py (H2),
                 displacement_study.py (SPEC 10.6), funnel.py (SPEC 11.7),
-                marginal_value.py (H5), fvg_study.py (SPEC 12.6)
-scripts/        build_dataset.py, phase{1,5,6,7,8,9,10}_report.py,
+                marginal_value.py (H5), fvg_study.py (SPEC 12.6),
+                ob_study.py (SPEC 13.8)
+scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11}_report.py,
                 marginal_value_report.py, regen_golden.py
-tests/          349 tests + tests/golden/structure_h4.json
+tests/          395 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -157,7 +160,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-011 record corrections and findings from each phase's implementation.
+D-004 through D-012 record corrections and findings from each phase's implementation.
 
 ---
 
@@ -191,12 +194,16 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 22 | **FVG touch is range INTERSECTION, not SPEC 12.2's one-sided inequality.** One-sided made `INVALIDATED` structurally unreachable and counted every gap-over as a fill (D-011 §2). |
 | 23 | **Use `Fvg.status_at(bar)`, never `Fvg.status`, to ask what was available at a past bar.** The field holds the end-of-run value; reading it is invisible lookahead (D-011 §3). |
 | 24 | **`track_fvgs` returns copies.** Detection output is shared with the displacement engine, which must not depend on whether the tracker ran (D-011 §3). |
+| 25 | **The four OB definitions are worth ~1.77 independent tests, not 4.** Use `M_eff` in the multiple-testing correction. Same-bar agreement *understates* redundancy — they pick different bars at almost the same price (D-012 §2). |
+| 26 | **Never centre a correlation on the per-observation mean across the variables being compared.** It pins the average pairwise correlation at `-1/(k-1)`. Anchor on something exogenous (D-012 §3a). |
+| 27 | **Galwey, not Li & Ji, for effective test counts.** Li & Ji is discontinuous at integer eigenvalues and returns ~2 for *perfectly* correlated variants because `eigvalsh` gives 3.999999999999999 (D-012 §3b). |
+| 28 | **Null calibrations run 3,000 shuffles and quote a Wilson interval.** At 400 the standard error is ~1.1 points, the same size as the effect; three draws of one calibration read 4.8%, 8.0% and 5.5% (D-012 §4). |
 
 ---
 
-## 7. Four statistical lessons already learned the hard way
+## 7. Five statistical lessons already learned the hard way
 
-All four are the same mistake at different scales, and all four are now pinned by tests.
+All five are the same mistake at different scales, and all five are now pinned by tests.
 
 - **Phase 7:** 3 of 20 year×horizon significance tests fired on a random walk (≈1
   expected). The multiple-testing problem on data whose true effect is zero *by
@@ -212,6 +219,13 @@ All four are the same mistake at different scales, and all four are now pinned b
   the standard error and states the deviation **in sigma**, which turned out to matter:
   after the duplicate-row fix the real deviation was 2.5 sigma and genuine.
   `stats.calibration_sigma` now exists so no study can report a rate without it.
+- **Phase 11:** that sigma was itself computed from a 400-shuffle rate whose standard
+  error is ~1.1 points — the same size as the effect. Three draws of one calibration read
+  4.8%, 8.0% and 5.5%, and the 8.0% draw had already been written up as a finding in
+  D-010 §5. Calibrations now run 3,000 shuffles and quote a Wilson interval, and D-010's
+  figure was corrected (D-012 §4). **The lesson keeps arriving one level up: the fix for
+  the last instance was itself measured too imprecisely to support what was said about
+  it.**
 
 **A statistic not compared against what noise alone would produce is not a finding.**
 
@@ -261,17 +275,22 @@ and one of its findings is that part of it may not be answerable on real data ei
 (§3a). So the design stands and the next phases are the ones that turn an event into a
 trade.
 
-### Phase 11 → 13 → 14, building toward a backtest
+### Phase 12 → 13 → 14, building toward a backtest
 
-**Phase 11 is the Order Block definition bake-off** (SPEC 13, gate: "definition bake-off
-with the agreement matrix"). SPEC 13.1 opens by stating the definitional problem outright
-and 13.2 lists four candidate definitions — so unlike every phase so far, the deliverable
-is a *choice between rules*, made on measured agreement rather than on which reads best.
-Expect it to need the same pre-registration discipline as `reference_mode` did in Phase 9:
-four candidates compared is four chances, and picking the winner by outcome is what
-§10.2 forbids.
+**Phase 12 is the entry engine** (SPEC 15, gate: "all five models arm correctly on a
+fixture; fill logic verified against M1"). Two things Phases 10 and 11 leave on its desk:
 
-Then Phase 12 (entries), 13 (risk), 14 (the engine).
+- **Model C's limit price depends on `Fvg.proximal`**, which SPEC 12.1 labelled backwards
+  and D-011 §1 corrected. Model D's depends on `OrderBlock.proximal` the same way.
+- **Fill rate is the headline statistic, not a nuisance** (SPEC 15.5, 13.7). Half of
+  OB-A's blocks are never touched within 30 bars, so model D will discard about half the
+  setups it is offered — before the other four models' fill rates are known. A model with
+  a fifth of the sample cannot be compared naively against model A.
+
+The M1 half of that gate needs real intrabar data (Q2), so expect it to come back
+**BLOCKED** on the same question everything else is waiting on.
+
+Then Phase 13 (risk) and 14 (the backtest engine).
 
 ### Still blocking real results
 
@@ -293,10 +312,13 @@ studies are built, and none of their numbers mean anything about markets yet.
 1. **`scripts/phase9_report.py`** — the funnel on real bars. The gate's PASS is currently
    a projection from a synthetic conversion rate; this replaces it with a measurement,
    and the ABLATION sensitivity in §3 means the verdict could genuinely go either way.
-2. **`scripts/marginal_value_report.py`** — H5, for real. The instrument is validated and
-   the power arithmetic re-computes itself from the real return variance, which is the
-   number most likely to move.
-3. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
+2. **`scripts/phase11_report.py`** — recompute `M_eff` for the OB definitions. It is a
+   property of how the four behave on *this* fixture; real bars have trends and gaps and
+   the definitions may diverge more there. Every later correction depends on this number.
+3. **`scripts/phase10_report.py`** and **`scripts/marginal_value_report.py`** — the two
+   edge tests. Their instruments are validated and their power arithmetic recomputes
+   itself from the real return variance, which is the number most likely to move.
+4. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
    TUNABLE/ABLATION split.
 
 ### Before Phase 14

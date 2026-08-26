@@ -218,6 +218,29 @@ def detects_effect(
     return bool(np.isfinite(lo) and (lo > 0 or hi < 0))
 
 
+def calibration_interval(
+    rate: float, trials: int, z: float = _Z_ALPHA
+) -> tuple[float, float]:
+    """Wilson score interval on a measured false-positive rate.
+
+    Reported alongside the rate because the rate is itself an estimate from a modest
+    number of shuffles, and a point value invites reading a swing between two runs as a
+    change in calibration. Observed directly: the same study measured 8.0% on 300 trials
+    and 4.8% on 400, which the interval shows are compatible and the point estimates
+    alone do not.
+
+    Wilson rather than the normal approximation: at rates near 0.05 with a few hundred
+    trials the normal interval can extend below zero, which is not a probability.
+    """
+    if trials <= 0 or not np.isfinite(rate):
+        return (float("nan"), float("nan"))
+    n = float(trials)
+    denom = 1.0 + z * z / n
+    centre = (rate + z * z / (2 * n)) / denom
+    half = (z / denom) * np.sqrt(rate * (1 - rate) / n + z * z / (4 * n * n))
+    return (float(max(0.0, centre - half)), float(min(1.0, centre + half)))
+
+
 def calibration_sigma(rate: float, trials: int, alpha: float = ALPHA) -> float:
     """How far a measured false-positive rate sits from nominal, in standard errors.
 

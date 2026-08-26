@@ -27,6 +27,7 @@ from bot.research import fvg_study as FS  # noqa: E402
 from bot.research.stats import (  # noqa: E402
     ALPHA,
     Verdict,
+    calibration_interval,
     calibration_sigma,
     detects_effect,
     null_calibration,
@@ -97,8 +98,10 @@ def main() -> int:
 
     print("controls ...", flush=True)
     r1 = pooled.results[0]
-    fpr = null_calibration(r1.touch.returns, r1.control.returns, trials=400, bootstrap=1000)
-    sigma = calibration_sigma(fpr, 400)
+    CAL_TRIALS = 3000
+    fpr = null_calibration(r1.touch.returns, r1.control.returns, trials=CAL_TRIALS, bootstrap=600)
+    sigma = calibration_sigma(fpr, CAL_TRIALS)
+    fpr_lo, fpr_hi = calibration_interval(fpr, CAL_TRIALS)
     grid = [
         (s, detects_effect(r1.touch.returns, r1.control.returns, s))
         for s in (0.0, 0.05, 0.1, 0.25, 0.5)
@@ -147,7 +150,7 @@ def main() -> int:
         (
             "Null calibration lands near alpha",
             0.0 < fpr < 0.12,
-            f"{fpr:.1%} over 400 shuffles ({sigma:.1f} sigma from alpha {ALPHA:.0%})",
+            f"{fpr:.1%} over {CAL_TRIALS:,} shuffles ({sigma:.1f} sigma from alpha {ALPHA:.0%})",
         ),
         (
             # Deliberately not "every terminal status": INVALIDATED needs a price
@@ -366,21 +369,23 @@ def main() -> int:
     w("")
     w("### Null calibration")
     w("")
-    w(f"- False-positive rate over 400 label shuffles: **{fpr:.1%}** against alpha of {ALPHA:.0%}")
+    w(f"- False-positive rate over {CAL_TRIALS:,} label shuffles: **{fpr:.1%}** against alpha of {ALPHA:.0%}")
+    w(f"- 95% Wilson interval: **[{fpr_lo:.1%}, {fpr_hi:.1%}]** — contains alpha: {'yes' if fpr_lo <= ALPHA <= fpr_hi else 'no'}")
     w(f"- Deviation: **{sigma:.1f} sigma**")
     w("")
-    if sigma < 2.0:
-        w("**Calibrated.** The gap is inside what 400 shuffles can resolve, so there is")
-        w("nothing to correct and nothing to read into its direction. Reporting the sigma")
-        w("rather than the rate alone is the habit three prior sub-2-sigma misreadings")
-        w("produced (D-007 §5, D-008 §3, D-010 §5).")
+    if fpr_lo <= ALPHA <= fpr_hi:
+        w("**Calibrated**, and now on enough shuffles to say so. An earlier version of this")
+        w("report ran 400 and quoted the point estimate alone; at that trial count the")
+        w("standard error is about 1.1 points, which is the same size as the deviation")
+        w("being looked for. See D-012 §4.")
     else:
-        w(f"**Off nominal at {sigma:.1f} sigma.** Every interval in this report should be")
-        w("read with that in mind.")
+        w(f"**Off nominal**: the interval excludes alpha at {sigma:.1f} sigma. Every interval")
+        w("in this report should be read with that in mind.")
     w("")
-    w("Notably this is much better calibrated than the H5 study's 2.5 sigma, and for a")
-    w("plain reason: the percentile bootstrap under-covers with a few dozen heavy-tailed")
-    w("observations, and this study has hundreds rather than dozens.")
+    w("This study has hundreds of observations where the H5 study had dozens, and the")
+    w("percentile bootstrap under-covers with a few dozen heavy-tailed values — so a")
+    w("difference between the two is expected. It is a smaller difference than the earlier")
+    w("400-shuffle draws suggested (D-012 §4).")
     w("")
 
     w("## Do bigger gaps behave differently?")

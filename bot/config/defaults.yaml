@@ -168,6 +168,18 @@ fvg:
   merge_overlapping: false
   selection: first
 
+# SPEC 13.  `definition` is four pre-registered VARIANTS, not a knob: 13.1 states that the
+# standard formulation is under-specified in three places and that the choices produce
+# zones tens of pips apart.  13.8 requires the agreement matrix alongside any comparison,
+# so that near-identical variants are not counted as independent tests.
+ob:
+  definition: last_opposing
+  zone_mode: full_range
+  max_lookback_bars: 10
+  max_distance_atr: 3.0
+  max_age_bars: 30
+  invalidate_closes: 1
+
 eq:
   min_touches: 2
   tolerance_atr: 0.10

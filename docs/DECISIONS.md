@@ -839,6 +839,13 @@ ablation delta, which measures the same component through the full system.
   **7.8%** against alpha of 5%, which at 400 trials is **2.5 sigma** — genuinely
   anti-conservative, not noise.
 
+  > **Corrected in D-012 §4.** That was a 400-shuffle draw, where the standard error on
+  > the rate is ~1.1 points — the same size as the effect. Re-run at 3,000 shuffles the
+  > figure is **5.90%, Wilson [5.11%, 6.80%]**: still above alpha, but far less than 7.8%.
+  > The direction of this claim survives; the magnitude does not, and neither does
+  > "not noise" as stated on 400 trials. Every calibration in the project now runs 3,000
+  > shuffles and quotes its interval.
+
 The percentile bootstrap under-covers with a few dozen heavy-tailed observations. Both
 consequences point the same way: the intervals are too narrow, so the study is *more*
 underpowered than its table shows, and a `DIFFERENT` verdict is over-eager — which for
@@ -1021,3 +1028,164 @@ stays *available* to entry model C afterwards. So it has no bearing on whether p
 back, and the edge test — which anchors on the first touch — cannot move. Anyone reading
 this ablation as evidence about the edge would be reading it wrong, and anyone reading the
 identical columns as a copy-paste error would be too.
+
+---
+
+## D-012 — The Order Block bake-off, two statistical corrections, and one flagged ambiguity
+
+| | |
+|---|---|
+| **Date** | 2026-08-25 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 11 implementation (Order Blocks, SPEC 13) |
+
+Phase 11's deliverable is unlike every phase before it: SPEC 13.1 opens by admitting that
+the standard Order Block formulation is under-specified in three places, and 13.2 offers
+four candidate definitions. So the gate is a **comparison between rules**, and the
+headline output is not a performance number but a count of how many independent
+hypotheses those four rules actually represent.
+
+### 1. OB-D is under-specified in a way A/B/C are not, and is flagged rather than resolved
+
+OB-A, OB-B and OB-C all key off the displacement leg of the setup in hand and are fully
+determined by SPEC 13.2's table. OB-D points at a **different structural event** in one
+line — *"the last opposing bar of the failed move: the up-bar before a swing high that was
+subsequently broken downward, now used as resistance-turned-support"* — without saying
+which swing, how far back to look, or what "broken downward" means for a level that is
+broken upward by definition.
+
+The reading implemented (documented at `order_blocks._ob_d`): for a bullish setup, the
+most recent confirmed swing **low** before the sweep whose price the sweep traded below —
+the failed move, whose support gave way — and then the last bar before that swing formed
+which closed in the direction of the failed move.
+
+**Recorded as a flagged ambiguity, not a resolved one.** At least two other readings are
+defensible. Its consequence is visible and reported rather than hidden: OB-D produces
+**72 blocks against OB-A's 178** on the fixture, failing on `NO_FAILED_MOVE` and
+`OB_ABOVE_REFERENCE` where the others do not. SPEC 13.7 makes that rate *"a quality signal
+for the definition"*, so it is reported as one — but it is a signal about this reading,
+not about the breaker concept, and the report says so.
+
+### 2. Finding: four variants are worth 1.77 tests, and same-bar agreement hides it
+
+SPEC 13.8 requires the agreement matrix for a stated reason: *"near-identical variants
+must not be counted as independent tests when applying the multiple-testing correction."*
+That is a statistical instruction, so the deliverable is a number.
+
+**M_eff = 1.77 against a nominal 4** (Galwey's estimator on the correlation of proposed
+entry offsets, listwise n = 71). Correcting as though these were four independent tests
+would over-correct by a factor of 2.3.
+
+The interesting part is that the spec's own suggested instrument does not detect this:
+
+| | Same-bar agreement | Entry-offset correlation |
+|---|---:|---:|
+| OB-A vs OB-B | 79.4% | 0.976 |
+| OB-A vs OB-C | 23.0% | 0.971 |
+| OB-A vs OB-D | 0.0% | 0.872 |
+| OB-C vs OB-D | 0.0% | 0.918 |
+
+By same-bar agreement the definitions look largely independent — OB-D agrees with nobody,
+ever. By entry price they are nearly redundant: every pair correlates above 0.87. **They
+pick different bars that sit at almost the same price.**
+
+SPEC 13.6's heuristic — *"if OB-A and OB-C select the same bar 80% of the time, they are
+not two hypotheses"* — is the right instinct with the wrong instrument. On this fixture
+same-bar agreement **understates** redundancy badly. What a trade consumes is the entry
+price, and two rules differing by a fraction of an ATR are one hypothesis however
+different their reasoning looks. Both measures are reported; the correlation is the one
+that feeds `M_eff`.
+
+### 3. Two statistical bugs in the agreement machinery, both caught by measurement
+
+**(a) Centring the correlation on the per-setup mean is a compositional artifact.** The
+first version removed each setup's price level by subtracting the mean *across the
+definitions*. That forces the deviations to sum to zero and pins the average pairwise
+correlation at exactly `-1/(k-1)`. It produced a matrix where OB-A and OB-B correlated at
+**0.28 while agreeing on the same bar 79% of the time**, and where everything correlated
+negatively with OB-D.
+
+Caught by the internal contradiction, then confirmed directly: four *independent* random
+variables, row-centred, show a mean pairwise correlation of −0.333, matching −1/(k−1)
+exactly; the observed off-diagonals averaged −0.239, carrying the same signature.
+
+Fixed by anchoring on the break bar's close in ATR units — **exogenous to the set of
+definitions**, so adding or removing a variant cannot move the others.
+
+**(b) Li & Ji's effective-test estimator is discontinuous exactly where this study
+lives.** It sums `I(λ ≥ 1) + frac(λ)`. Four perfectly correlated variants give eigenvalues
+`[4, 0, 0, 0]` and it analytically returns 1 — but it never sees an exact 4:
+`numpy.linalg.eigvalsh` on a matrix of ones returns **3.999999999999999**, `floor` drops
+from 4 to 3, and the estimate jumps to ~2. It is wrong by a whole test on the most
+redundant input possible, from floating-point noise alone, before any sampling noise.
+
+Near-identical variants are this study's entire subject, so the estimator would be least
+stable precisely where it is needed. **Galwey's `(Σ√λ)² / Σλ` is used instead**:
+continuous, and exact at every anchor (`[4,0,0,0] → 1`, `[2,2,0,0] → 2`, `[1,1,1,1] → 4`).
+Li & Ji is kept in the module for reference and pinned by a test documenting the
+discontinuity.
+
+### 4. Correction to D-010 §5: the H5 null calibration was overstated
+
+D-010 §5 reported the H5 study's false-positive rate as **7.8%, 2.5 sigma, "genuinely
+anti-conservative, not noise"**. That was a 400-shuffle draw, where the standard error on
+the rate is about 1.1 points — the same size as the effect being described.
+
+Three draws of the *Phase 11* calibration on 300–400 trials read 4.8%, 8.0% and 5.5%. The
+extremes are mutually compatible (their Wilson intervals overlap) yet disagree about
+whether alpha is inside, which is exactly the question a calibration exists to answer.
+
+Re-run at **3,000 shuffles**:
+
+| Study | n treated | FPR | 95% Wilson | Contains alpha |
+|---|---:|---:|---|---|
+| H5 (MSS vs CHoCH-not-MSS) | 32 | 5.90% | [5.11%, 6.80%] | no |
+| FVG edge test | 570 | 5.47% | [4.71%, 6.34%] | yes |
+| OB edge test (OB-A) | 43 | 4.83% | [4.12%, 5.66%] | yes |
+
+**The direction of D-010's claim survives and the magnitude does not.** H5 is mildly
+anti-conservative — 5.9% against 5%, not 7.8% — and the practical consequence is
+correspondingly smaller. Its conclusions do not change: the bias still runs in the
+direction that protects an UNDERPOWERED verdict.
+
+Two things changed as a result, project-wide:
+
+1. **Every null calibration now runs 3,000 shuffles** and quotes its Wilson interval.
+   `stats.calibration_interval` was added for this.
+2. **`reports/marginal_value.md` and `reports/phase10_gate.md` were regenerated** with the
+   corrected figures, and the H5 report now carries a note explaining the correction.
+
+This is the fourth time in this project a sub-2-sigma or noisy statistic was written up as
+a finding before being caught (D-007 §5, D-008 §3, D-010 §5, and this). The pattern is
+consistent enough to be worth naming: **a rate is never quoted without its uncertainty**,
+and a calibration is not evidence until its interval is narrower than the effect it is
+supposed to detect.
+
+### 5. Finding: every OB definition's edge test is underpowered, and by how much
+
+All four definitions return `UNDERPOWERED` at every horizon — not "no edge", since the
+intervals are far too wide to sit inside the declared ±0.25 ATR margin.
+
+The cause is sample size, and it places the OB study precisely between the two already
+run. OB-A yields **43 touch events across 3 symbol-years**, because a block is only
+proposed at a CHoCH that displaced and only a quarter are ever touched:
+
+| Study | Touch events (3 symbol-years) | Universe projects | Answerable? |
+|---|---:|---:|---|
+| H5 | 32 MSS | ~427 | no, at any long horizon |
+| **OB edge test** | **43** | **~573** | h=1 and h=3 only |
+| FVG edge test | 571 | ~7,613 | yes, every horizon |
+
+Worth knowing before Phase 12 builds entry model D on top of it: the model can be built,
+but the evidence that its zone means anything will be thin at the horizons that matter.
+
+### 6. Finding: half of OB-A's blocks are never filled
+
+Fill rate at 30 bars is **50.3%** for OB-A, 51.2% for OB-B, 45.6% for OB-C and 65.9% for
+OB-D. SPEC 13.7 makes this a headline rather than a detail: *"a model with a 20% fill rate
+has a fifth of the sample size and cannot be compared naively against model A."*
+
+Entry model D will therefore discard about half the setups it is offered, before any of
+the other four entry models have had their fill rates measured — which is a Phase 12
+planning fact, and the reason fill rate is reported per definition here rather than
+averaged.

@@ -120,7 +120,7 @@ bot/
     displacement.py    §10 leg-based drive test, fixed origin              [Phase 8]
     fvg.py             §12 detection, lifecycle, selection            [Phase 8/10]
     mss.py             §11 CHoCH reference selection, MSS confirmation    [Phase 9]
-    order_blocks.py    §13
+    order_blocks.py    §13 four definitions, zones, lifecycle           [Phase 11]
   strategy/
     setup.py           §14 Setup object
     machine.py         STATE_MACHINE.md transition table (data-driven, not if/else)
@@ -144,6 +144,7 @@ bot/
     displacement_study.py  §10.6 threshold distribution + rejection rates  [Phase 8]
     funnel.py          §11.7 the sweep -> CHoCH -> MSS funnel and its gate  [Phase 9]
     fvg_study.py       §12.6 standalone FVG edge test                    [Phase 10]
+    ob_study.py        §13.8 bake-off, agreement matrix, M_eff          [Phase 11]
     stats.py           shared bootstrap / power / verdict primitives     [Phase 10]
     marginal_value.py  §6.2 MSS vs CHoCH-not-MSS (tests H5)                  [study]
   reporting/

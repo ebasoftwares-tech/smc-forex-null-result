@@ -1817,6 +1817,15 @@ For a **bullish** setup with displacement leg `[a..b]` (mirror for bearish):
 Search is bounded: `ob.max_lookback_bars` (default **10**) bars before `a_disp`. If no
 qualifying bar exists, no OB is produced and entry model D cannot arm.
 
+**OB-D is under-specified relative to the other three (D-012 §1).** A, B and C are fully
+determined by the table above and key off the displacement leg of the setup in hand. D
+points at a *different* structural event in one line and does not say which swing, how far
+back to search, or what "broken downward" means for a level that is broken upward by
+definition. The reading implemented in `bot/core/order_blocks.py::_ob_d` is documented
+there; at least two others are defensible. Its hit rate on the Phase 11 fixture — 72
+blocks against OB-A's 178 — should be read as a property of that reading rather than of
+the breaker concept.
+
 ### 13.3 Zone
 
 `ob.zone_mode`:
@@ -1881,6 +1890,14 @@ b   (break bar)         O 1.08460  H 1.08790  L 1.08440  C 1.08760    up bar, br
   every other respect. Report the agreement matrix (how often they pick the same bar) as well
   as performance, because near-identical variants must not be counted as independent tests
   when applying the multiple-testing correction.
+
+  **Same-bar agreement is necessary but not sufficient, and on the Phase 11 fixture it is
+  badly misleading on its own (D-012 §2).** Measured there, OB-A and OB-C picked the same
+  bar only 23% of the time and OB-D agreed with the others *never* — yet every pair's
+  proposed entry price correlated above 0.87. The definitions pick **different bars that
+  sit at almost the same price**, so same-bar agreement understates redundancy. What the
+  correction needs is an effective test count computed from the correlation of proposed
+  entries: **1.77 against a nominal 4**. Report both; correct with the second.
 - Standalone edge test, as for FVG: forward return from first touch of an unmitigated OB.
 - Fill-rate and time-to-fill distributions per definition and per `zone_mode`.
 

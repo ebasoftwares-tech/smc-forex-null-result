@@ -601,6 +601,132 @@ class ObConfig(Frozen):
     )
 
 
+class SetupConfig(Frozen):
+    """SPEC 14.4 -- concurrency caps.
+
+    When a new setup would exceed a cap the **lower-ranked** one is invalidated as
+    SUPERSEDED and logged with both ids, so the discarded alternative's outcome is still
+    available to the counterfactual study.
+    """
+
+    max_active_per_symbol: int = Field(2, ge=1, description="FROZEN. SPEC 14.4.")
+    max_active_per_direction: int = Field(1, ge=1, description="FROZEN. SPEC 14.4.")
+    max_armed_orders: int = Field(1, ge=1, description="FROZEN. SPEC 14.4.")
+
+
+class EntryConfig(Frozen):
+    """SPEC 15.  Five models, run as five pre-registered variants over one shared setup
+    stream (SPEC 15.8) so the comparison is **paired** -- "model C beats model A" is then
+    a statement about the same setups rather than about two different populations."""
+
+    model: Literal["A", "B", "C", "D", "E"] = Field(
+        "C",
+        description=(
+            "ABLATION -- five separately pre-registered variants. SPEC 15.2. Compare on "
+            "expectancy per SETUP, never per trade: models B-E do not always fill, and a "
+            "model that fills on the best-looking third of setups shows a better win rate "
+            "and a worse total return (SPEC 15.5)."
+        ),
+    )
+    retrace_pct: float = Field(
+        0.50,
+        gt=0.0,
+        lt=1.0,
+        description="ABLATION {0.382, 0.5, 0.618}. SPEC 15.2, model B only.",
+    )
+    fvg_entry_point: Literal["proximal", "ce", "distal"] = Field(
+        "ce", description="ABLATION. SPEC 15.2, model C only."
+    )
+    ob_entry_point: Literal["proximal", "ce", "distal"] = Field(
+        "proximal", description="ABLATION. SPEC 15.2, model D only."
+    )
+    pending_expiry_bars: int = Field(
+        6,
+        ge=1,
+        description=(
+            "TUNABLE {3, 6, 9, 12}. SPEC 15.1. Directly trades fill rate against entry "
+            "quality, which is why it is one of only eight tunable parameters."
+        ),
+    )
+    cancel_on_bias_flip: bool = Field(
+        True, description="ABLATION. SPEC 15.1 cancel_if 3."
+    )
+    fallback_model: Literal["none", "A", "B", "C", "D", "E"] = Field(
+        "none",
+        description=(
+            "FROZEN at 'none'. SPEC 15.7: a fallback chain silently mixes populations and "
+            "makes per-model statistics uninterpretable."
+        ),
+    )
+
+
+class SlConfig(Frozen):
+    """SPEC 16.  **Only S1 is implemented in Phase 12**, because ``cancel_if`` clause 1
+    (SPEC 15.1) needs a planned stop price before an order can be armed at all. The other
+    models, the full SPEC 16.2 buffer and the 16.3 constraints belong to their own phase.
+
+    The buffer here is the ATR term only. SPEC 16.2 takes the max of that, a spread
+    multiple and the broker's stops level -- neither of which exists until Q1/Q2 deliver a
+    broker and real spread data, and inventing them would make the stop a property of the
+    invention.
+    """
+
+    model: Literal["sweep_extreme", "structural_swing", "order_block", "atr"] = Field(
+        "sweep_extreme",
+        description=(
+            "ABLATION S1-S4. SPEC 16.1. S1 is the default because the sweep extreme is "
+            "the price at which the setup's premise is falsified: below it, the 'sweep' "
+            "was a breakout. [Phase 12 implements S1 only.]"
+        ),
+    )
+    buffer_atr: float = Field(
+        0.10, ge=0.0, description="ABLATION {0.05, 0.10, 0.20}. SPEC 16.2."
+    )
+    buffer_spread_mult: float = Field(
+        2.0, ge=0.0, description="FROZEN. SPEC 16.2 -- inert until real spread data (Q1/Q2)."
+    )
+    atr_multiple: float = Field(
+        1.5, gt=0.0, description="FROZEN. SPEC 16.1, S4 only. [Phase 13]"
+    )
+
+
+class ExecConfig(Frozen):
+    """SPEC 26 -- execution realism."""
+
+    latency_ms: int = Field(
+        250,
+        ge=0,
+        description=(
+            "FROZEN. SPEC 15.3. A market fill is the first price at or after "
+            "close_time(b) + latency, never the close that triggered the signal."
+        ),
+    )
+
+
+class BacktestConfig(Frozen):
+    """SPEC 17.5 / 15.4 -- how a bar is resolved into fills."""
+
+    intrabar_mode: Literal["m1_path", "pessimistic"] = Field(
+        "m1_path",
+        description=(
+            "FROZEN. SPEC 17.5: m1_path is 'the only correct option' and 'pessimistic' is "
+            "the fallback when M1 is absent. `ohlc_heuristic` is prohibited by the spec "
+            "and is therefore not offered here -- an option that must never be selected "
+            "should not be selectable."
+        ),
+    )
+    limit_fill_buffer_pips: float = Field(
+        0.2,
+        ge=0.0,
+        description=(
+            "FROZEN. SPEC 15.4. A limit order price merely TOUCHES is not reliably filled "
+            "-- the queue may never reach you. Assuming touch-fills is one of the largest "
+            "silent optimisms in retail backtesting and it flatters models B-E "
+            "specifically."
+        ),
+    )
+
+
 class AppConfig(Frozen):
     """The fully resolved configuration.  Hashed to produce ``config_hash``."""
 
@@ -618,6 +744,11 @@ class AppConfig(Frozen):
     choch: ChochConfig = ChochConfig()
     invalidate: InvalidateConfig = InvalidateConfig()
     ob: ObConfig = ObConfig()
+    setup: SetupConfig = SetupConfig()
+    entry: EntryConfig = EntryConfig()
+    sl: SlConfig = SlConfig()
+    exec: ExecConfig = ExecConfig()
+    backtest: BacktestConfig = BacktestConfig()
     fvg: FvgConfig = FvgConfig()
     eq: EqualLevelsConfig = EqualLevelsConfig()
     range: RangeConfig = RangeConfig()

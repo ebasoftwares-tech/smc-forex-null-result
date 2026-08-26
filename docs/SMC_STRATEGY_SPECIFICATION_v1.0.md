@@ -1997,6 +1997,15 @@ EntryPlan { model, order_type: MARKET | LIMIT, price, valid_from, expires_at,
   touching the level intrabar in live trading:
   1. Price reaches the planned SL before the entry fills (`SL_BEFORE_ENTRY`). Without this,
      a limit order can fill on the way back up from a level that already invalidated the idea.
+
+     **This requires a gap, and the reason is worth stating (D-013 §1-2).** A limit at `p`
+     with its stop beyond it is approached from the far side, so any *continuous* path
+     reaching the stop passed the entry first: the order filled. For the stop to be reached
+     with the order unfilled, price must **open beyond both** — and it is exactly that
+     revisit-after-a-gap the clause is written for. A bar that merely touches both is not
+     ambiguous and must fill; resolving it "pessimistically" as a cancel is both physically
+     wrong and, since a fill that stops out loses 1R while a cancel loses nothing, not the
+     pessimistic outcome either.
   2. An opposing sweep confirms (`OPPOSING_SWEEP`).
   3. The MTF gate flips against the setup — `entry.cancel_on_bias_flip` (default **true**).
   4. Expiry reached (`ENTRY_EXPIRED`).
@@ -2033,6 +2042,11 @@ plus modelled slippage, or, when M1 data is available, at the first M1 price aft
 | BUY LIMIT at `p` | `L_bar ≤ p − backtest.limit_fill_buffer_pips` (default **0.2**) | `p` (+ spread → ask) |
 | SELL LIMIT at `p` | `H_bar ≥ p + buffer` | `p` |
 | STOP orders | Not used in v1.0 | — |
+
+A bar that reaches both the limit and the planned stop **fills** (D-013 §1): the order of
+events inside it is fixed by price continuity, not left to `backtest.intrabar_mode`. The
+mode decides only bars that *open* beyond the stop, where a gap means the path is genuinely
+unobservable from OHLC.
 
 The buffer exists because a limit order that price merely *touches* is not reliably filled —
 the queue may never reach you. Assuming touch-fills is one of the largest silent optimisms in

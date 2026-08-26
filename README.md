@@ -1,6 +1,6 @@
 # SMC Forex Bot — Specification Repository
 
-**Status: PHASES 1, 5, 6, 7, 8, 9, 10 and 11 COMPLETE**, plus the H5 falsification study. 395 tests green.
+**Status: PHASES 1, 5, 6, 7, 8, 9, 10, 11 and 12 COMPLETE**, plus the H5 falsification study. 425 tests green.
 
 Phase 9 was the project's decision point — the funnel that says whether the design
 produces a testable number of tradable events. It does, on the `major` reference mode
@@ -27,16 +27,17 @@ durable output is a power requirement: resolving MSS against CHoCH-not-MSS at th
 | — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, out of order) | `reports/marginal_value.md` (8/8; instrument validated, H5 open) |
 | 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` (10/10; two spec corrections, see D-011) |
 | 11 | Order Block bake-off: four definitions, agreement matrix | `reports/phase11_gate.md` (10/10; four variants are worth 1.77 tests, see D-012) |
+| 12 | Entry engine: five models, fill resolution vs M1 | `reports/phase12_gate.md` (8/8; a "conservative" fill default that was neither, see D-013) |
 
 Phase 5 was built before 2–4 deliberately: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
-mostly configuration. Phases 2–4 and 12–17 are not started.
+mostly configuration. Phases 2–4 and 13–17 are not started.
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/             # 395 tests
+.venv/Scripts/python.exe -m pytest tests/             # 425 tests
 .venv/Scripts/python.exe scripts/phase1_report.py     # Phase 1 gate report
 .venv/Scripts/python.exe scripts/phase9_report.py     # Phase 9 gate report — the funnel
-.venv/Scripts/python.exe scripts/phase11_report.py    # Phase 11 gate — the OB bake-off
+.venv/Scripts/python.exe scripts/phase12_report.py    # Phase 12 gate — the entry engine
 .venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
 .venv/Scripts/python.exe scripts/regen_golden.py      # only when a structure change is intended
 ```

@@ -1189,3 +1189,116 @@ Entry model D will therefore discard about half the setups it is offered, before
 the other four entry models have had their fill rates measured — which is a Phase 12
 planning fact, and the reason fill rate is reported per definition here rather than
 averaged.
+
+---
+
+## D-013 — The entry engine, and a "conservative" default that was neither
+
+| | |
+|---|---|
+| **Date** | 2026-08-25 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 12 implementation (entry models and fill resolution, SPEC 15) |
+
+### 1. The within-bar order of entry and stop is determined, not ambiguous
+
+A limit sits at `p` with its stop at `s` beyond it, and price approaches from the far
+side. **Any continuous path that reaches `s` must pass `p` first.** So a bar that touches
+both did not pose a question: the entry filled.
+
+The first version of this module treated such a bar as a coin flip the bar could not
+settle, and resolved it "pessimistically" by cancelling the order. On the Phase 12 fixture
+that produced **15 false cancels**, and the M1 replay disagreed with every one of them.
+
+**It was wrong twice over, and the second way is the instructive one.** Cancelling is not
+the pessimistic *outcome*: a fill that then stops out loses 1R, while a cancel loses
+nothing. Reaching for "be conservative" without asking *conservative about what* produced
+an answer that was both physically incorrect and less conservative than the truth. The
+label did the reasoning instead of the reasoning.
+
+`resolve_fill` now fills such a bar and records `touched_both` as a diagnostic rather than
+an ambiguity. The bar-level rule and the M1 replay agree on **all 814 armed orders**.
+
+### 2. `cancel_if` clause 1 needs a gap, and SPEC 15.1 already said so
+
+Once §1 is right, the clause looks nearly unreachable — which prompted re-reading what it
+is for. SPEC 15.1 states it plainly: *"Without this, a limit order can fill on the way back
+up from a level that already invalidated the idea."*
+
+That scenario requires price to reach the stop **without having filled on the way**, which
+under continuity requires a **gap past both**. So the clause is not about within-bar
+ordering at all; it is about a level that was blown through and then revisited. The
+implementation now:
+
+- cancels when a bar **opens beyond the stop** (a true gap), and
+- consults M1 there, because a finer series may show the level was offered after all.
+
+That is the only place `backtest.intrabar_mode` changes an answer. SPEC 15.1 and 15.4 are
+amended in place to say so.
+
+`ohlc_heuristic` is prohibited by SPEC 17.5 and is deliberately **not offered as a config
+value**: an option that must never be selected should not be selectable.
+
+### 3. The fixture cannot demonstrate SPEC 15.3's trap, at all
+
+SPEC 15.3 calls filling model A at `C_b` *"a lookahead of one full bar"* worth 10-30% of
+headline return on H4. Measured on this fixture, the advantage is **exactly 0.0000 ATR per
+trade** — because `bot/data/synthetic.py` emits a continuous walk in which every bar opens
+at the previous close, weekends included. There were **0 non-zero gaps in 4,857 bar
+transitions**.
+
+The whole magnitude of the trap lives in the close-to-open gap: spread, overnight, news.
+The rule is correct and load-bearing, and the fixture simply has nothing to say about it.
+Covered by `test_model_A_never_fills_at_the_close_that_triggered_it` instead.
+
+The same continuity makes the gap-past-the-stop branch unreachable (**0 occurrences**), so
+`cancel_if` clause 1 and the `intrabar_mode` branch are exercised by constructed tests and
+nowhere else — the position Phase 10's `INVALIDATED` was in, for the same reason (D-011
+§2). Both are first in line to re-measure when Q2 delivers real bars.
+
+### 4. Finding: the opposing-sweep cancel makes every limit model unusable here
+
+| Model | Fill rate without `cancel_if` 2 | With it |
+|---|---:|---:|
+| A — market | 100.0% | 100.0% |
+| B — retracement | 39.4% | 1.8% |
+| C — FVG | 33.1% | 1.9% |
+| D — order block | 33.3% | 1.9% |
+| E — 50% of the leg | 40.6% | 3.0% |
+
+The fixture carries 2,298 confirmed sweeps over 4,860 H4 bars — 0.47 per bar — so over a
+6-bar expiry window an opposing sweep is close to certain. Model A is untouched because a
+market order never waits.
+
+**This is D-009 §9 one level down and it is a fixture property, not a finding about the
+models.** A random walk with up to 40 active liquidity levels produces sweeps at a rate no
+real market sustains. Both columns are reported so the fixture effect stays separable from
+the models, and the left column is used everywhere else in the Phase 12 report.
+
+### 5. Finding: model A is the only 100% model, and that is the whole problem
+
+Coverage across the five: 100%, 39%, 33%, 33%, 41%. SPEC 15.5 is explicit about the
+consequence — *"a model that fills 35% of the time on the best-looking third of setups
+will show a superior win rate and a worse total return"* — so any comparison must be on
+expectancy **per setup**, never per trade.
+
+That is a Phase 14 obligation, but the coverage numbers that make it obligatory are
+measured now, and they are large enough that ignoring them would decide the bake-off on
+its own.
+
+### 6. Scope deliberately left out
+
+- **Only stop model S1** (`sweep_extreme`). `cancel_if` clause 1 needs *a* planned stop
+  before an order can be armed, so S1 is implemented; S2-S4, SPEC 16.2's full buffer and
+  16.3's constraints are their own phase. The buffer here is the ATR term only — 16.2 also
+  takes a spread multiple and the broker's stops level, neither of which exists until
+  Q1/Q2, and inventing them would make every stop a property of the invention.
+- **Shadow trades (SPEC 15.6)** need `exit.max_bars_in_trade` and a stop/target policy.
+  Deferred to Phase 14, and worth doing rather than dropping: *"did we miss the good
+  ones?"* is a per-model question and is unanswerable without them.
+- **`bias_snapshot`** in SPEC 14.1's Setup object needs the SPEC 7 bias engine, which is
+  Phases 2-4. `cancel_if` clause 3 is implemented and takes an injected list of flip bars,
+  the same shape as the MSS engine's MTF gate (D-009).
+- **The M1 half of the gate is verified against synthetic M1.** It agrees with its own H4
+  by construction, so what it establishes is that the two code paths implement the same
+  rule — not that either matches a broker. Q2 is what makes it a real check.

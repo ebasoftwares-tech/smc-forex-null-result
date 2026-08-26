@@ -1,6 +1,6 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-25, after Phase 11.
+Last updated: 2026-08-25, after Phase 12.
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -27,15 +27,15 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 
 | | |
 |---|---|
-| **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11 |
-| **Tests** | 395, all passing |
-| **Commits** | 9, on `master` |
+| **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11, 12 |
+| **Tests** | 425, all passing |
+| **Commits** | 10, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 395 tests, ~26s
+.venv/Scripts/python.exe -m pytest tests/          # 425 tests, ~28s
 .venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
-.venv/Scripts/python.exe scripts/phase11_report.py  # the Phase 11 OB bake-off
+.venv/Scripts/python.exe scripts/phase12_report.py  # the Phase 12 entry engine
 .venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
 ```
 
@@ -52,6 +52,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, run out of order) | `reports/marginal_value.md` | 8/8 — instrument validated, **H5 open** |
 | 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 — two spec corrections, see D-011 |
 | 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 — **four variants are worth 1.77 tests**, see D-012 |
+| 12 | Entry engine — five models, fill resolution against M1 | `reports/phase12_gate.md` | 8/8 — a "conservative" fill default that was neither, see D-013 |
 
 **Phase 5 was built before 2–4 deliberately**: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
@@ -59,8 +60,7 @@ mostly configuration.
 
 ### Not started
 
-Phases 2–4 (Monthly/Weekly/Daily bias), 12–17 (entries, risk, backtest, charts,
-paper, live).
+Phases 2–4 (Monthly/Weekly/Daily bias), 13–17 (risk, backtest, charts, paper, live).
 
 ---
 
@@ -133,14 +133,14 @@ bot/config/     schema.py (every parameter, with FROZEN/ABLATION/TUNABLE in its
 bot/data/       calendar.py, resample.py, quality.py, ingest.py, synthetic.py
 bot/core/       bars.py, indicators.py, sessions.py, swings.py, structure.py,
                 liquidity.py, sweeps.py, displacement.py, fvg.py, mss.py,
-                order_blocks.py
+                order_blocks.py, entries.py
 bot/research/   stats.py (shared primitives), sweep_study.py (H2),
                 displacement_study.py (SPEC 10.6), funnel.py (SPEC 11.7),
                 marginal_value.py (H5), fvg_study.py (SPEC 12.6),
                 ob_study.py (SPEC 13.8)
-scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11}_report.py,
+scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11,12}_report.py,
                 marginal_value_report.py, regen_golden.py
-tests/          395 tests + tests/golden/structure_h4.json
+tests/          425 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -160,7 +160,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-012 record corrections and findings from each phase's implementation.
+D-004 through D-013 record corrections and findings from each phase's implementation.
 
 ---
 
@@ -198,6 +198,10 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 26 | **Never centre a correlation on the per-observation mean across the variables being compared.** It pins the average pairwise correlation at `-1/(k-1)`. Anchor on something exogenous (D-012 §3a). |
 | 27 | **Galwey, not Li & Ji, for effective test counts.** Li & Ji is discontinuous at integer eigenvalues and returns ~2 for *perfectly* correlated variants because `eigvalsh` gives 3.999999999999999 (D-012 §3b). |
 | 28 | **Null calibrations run 3,000 shuffles and quote a Wilson interval.** At 400 the standard error is ~1.1 points, the same size as the effect; three draws of one calibration read 4.8%, 8.0% and 5.5% (D-012 §4). |
+| 29 | **A bar touching both the entry and the stop FILLS.** Continuity fixes the order — a limit is passed on the way to a stop beyond it. Cancelling it is physically wrong *and* not the pessimistic outcome, since a fill that stops out loses 1R and a cancel loses nothing (D-013 §1). |
+| 30 | **`cancel_if` clause 1 needs a gap**, not a within-bar guess. It is about a level blown through and then revisited, which is the only place `backtest.intrabar_mode` changes an answer (D-013 §2). |
+| 31 | **The synthetic fixture is perfectly continuous** — every bar opens at the previous close, weekends included. SPEC 15.3's lookahead trap therefore measures exactly 0.0000 ATR here, and gap-cancels never fire (D-013 §3). |
+| 32 | **Model A is the only 100%-fill model.** Coverage runs 100/39/33/33/41%, so any model comparison must be per SETUP, never per trade (D-013 §5). |
 
 ---
 
@@ -275,22 +279,20 @@ and one of its findings is that part of it may not be answerable on real data ei
 (§3a). So the design stands and the next phases are the ones that turn an event into a
 trade.
 
-### Phase 12 → 13 → 14, building toward a backtest
+### Phase 13 → 14, building toward a backtest
 
-**Phase 12 is the entry engine** (SPEC 15, gate: "all five models arm correctly on a
-fixture; fill logic verified against M1"). Two things Phases 10 and 11 leave on its desk:
+**Phase 13 is risk management** (SPEC 18, gate: "every limit exercised by scenario; sizing
+purity test passes"). It is the last phase before the backtest engine, and the one Phase 12
+hands the most to:
 
-- **Model C's limit price depends on `Fvg.proximal`**, which SPEC 12.1 labelled backwards
-  and D-011 §1 corrected. Model D's depends on `OrderBlock.proximal` the same way.
-- **Fill rate is the headline statistic, not a nuisance** (SPEC 15.5, 13.7). Half of
-  OB-A's blocks are never touched within 30 bars, so model D will discard about half the
-  setups it is offered — before the other four models' fill rates are known. A model with
-  a fifth of the sample cannot be compared naively against model A.
+- **Only stop model S1 exists.** SPEC 16's S2-S4, its full buffer (which needs a spread
+  series and a broker stops level) and 16.3's reject-never-adjust constraints are
+  unbuilt. Sizing cannot be tested without them.
+- **Coverage differs by model** — 100/39/33/33/41% — so the sizing and limit machinery
+  has to be exercised against a setup stream where most orders never fill.
 
-The M1 half of that gate needs real intrabar data (Q2), so expect it to come back
-**BLOCKED** on the same question everything else is waiting on.
-
-Then Phase 13 (risk) and 14 (the backtest engine).
+Then Phase 14, where the shadow trades (SPEC 15.6), the per-setup expectancy comparison
+(15.5/15.8) and the exit policy all land together.
 
 ### Still blocking real results
 
@@ -318,7 +320,10 @@ studies are built, and none of their numbers mean anything about markets yet.
 3. **`scripts/phase10_report.py`** and **`scripts/marginal_value_report.py`** — the two
    edge tests. Their instruments are validated and their power arithmetic recomputes
    itself from the real return variance, which is the number most likely to move.
-4. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
+4. **`scripts/phase12_report.py`** — the two things the continuous fixture cannot show:
+   SPEC 15.3's lookahead (worth 10–30% of headline return per the spec, and exactly
+   0.0000 ATR here) and the gap-past-the-stop branch. Both are pure gap effects.
+5. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
    TUNABLE/ABLATION split.
 
 ### Before Phase 14

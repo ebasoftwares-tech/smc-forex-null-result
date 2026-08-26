@@ -180,6 +180,43 @@ ob:
   max_age_bars: 30
   invalidate_closes: 1
 
+# SPEC 14.4 / 15.  The five entry models are five pre-registered VARIANTS run over one
+# shared setup stream (15.8), so the comparison is paired.  Compare on expectancy per
+# SETUP, never per trade: B-E do not always fill, and a model that fills on the
+# best-looking third of setups shows a better win rate and a worse total return (15.5).
+setup:
+  max_active_per_symbol: 2
+  max_active_per_direction: 1
+  max_armed_orders: 1
+
+entry:
+  model: C
+  retrace_pct: 0.50
+  fvg_entry_point: ce
+  ob_entry_point: proximal
+  pending_expiry_bars: 6
+  cancel_on_bias_flip: true
+  # SPEC 15.7: a fallback chain makes per-model statistics uninterpretable.
+  fallback_model: none
+
+# SPEC 16.  Phase 12 implements S1 only -- cancel_if clause 1 needs a planned stop before
+# an order can be armed.  The buffer is the ATR term alone; 16.2's spread and stops-level
+# terms need a broker and real spread data (Q1/Q2).
+sl:
+  model: sweep_extreme
+  buffer_atr: 0.10
+  buffer_spread_mult: 2.0
+  atr_multiple: 1.5
+
+exec:
+  latency_ms: 250
+
+# SPEC 17.5: m1_path is the only correct option; `ohlc_heuristic` is prohibited by the
+# spec and is not offered as a value at all.
+backtest:
+  intrabar_mode: m1_path
+  limit_fill_buffer_pips: 0.2
+
 eq:
   min_touches: 2
   tolerance_atr: 0.10

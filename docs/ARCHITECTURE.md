@@ -121,10 +121,10 @@ bot/
     fvg.py             §12 detection, lifecycle, selection            [Phase 8/10]
     mss.py             §11 CHoCH reference selection, MSS confirmation    [Phase 9]
     order_blocks.py    §13 four definitions, zones, lifecycle           [Phase 11]
+    entries.py         §15 five models, fill resolution, S1 stop        [Phase 12]
   strategy/
     setup.py           §14 Setup object
     machine.py         STATE_MACHINE.md transition table (data-driven, not if/else)
-    entries.py         §15
     stops.py           §16
     targets.py         §17
   risk/

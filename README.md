@@ -28,16 +28,18 @@ durable output is a power requirement: resolving MSS against CHoCH-not-MSS at th
 | 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` (10/10; two spec corrections, see D-011) |
 | 11 | Order Block bake-off: four definitions, agreement matrix | `reports/phase11_gate.md` (10/10; four variants are worth 1.77 tests, see D-012) |
 | 12 | Entry engine: five models, fill resolution vs M1 | `reports/phase12_gate.md` (8/8; a "conservative" fill default that was neither, see D-013) |
+| 13 | Risk management: stops S1-S4, the RR gate, sizing and limits | `reports/phase13_gate.md` (8/8; **four defaults that cannot fire**, see D-014) |
 
 Phase 5 was built before 2–4 deliberately: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
-mostly configuration. Phases 2–4 and 13–17 are not started.
+mostly configuration. Phases 2–4 and 14–17 are not started.
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/             # 425 tests
+.venv/Scripts/python.exe -m pytest tests/             # 508 tests
 .venv/Scripts/python.exe scripts/phase1_report.py     # Phase 1 gate report
 .venv/Scripts/python.exe scripts/phase9_report.py     # Phase 9 gate report — the funnel
 .venv/Scripts/python.exe scripts/phase12_report.py    # Phase 12 gate — the entry engine
+.venv/Scripts/python.exe scripts/phase13_report.py    # Phase 13 gate — risk management
 .venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
 .venv/Scripts/python.exe scripts/regen_golden.py      # only when a structure change is intended
 ```

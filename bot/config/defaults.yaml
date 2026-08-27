@@ -211,6 +211,80 @@ sl:
 exec:
   latency_ms: 250
 
+# SPEC 17.1/17.2 -- Phase 13 implements target PLACEMENT and the minimum-RR gate.
+# 17.3's break-even and trailing, 17.4's exits and the EXECUTION of T3's ladder and T4's
+# trail need an open trade and belong to Phase 14.
+#
+# ladder_first_r is the `tp_1` that 17.2's gate measures for T3.  At 1.0 against
+# min_rr 1.5 the gate rejects T3 on every setup -- a contradiction between two
+# specification defaults, recorded in DECISION D-014 section 1 and deliberately NOT
+# resolved by editing either number here.
+tp:
+  model: fixed_r
+  r_multiple: 2.0
+  min_rr: 1.5
+  below_min_rr_action: skip
+  min_target_rank: 2.0
+  target_buffer_atr: 0.15
+  ladder_first_r: 1.0
+
+# SPEC 16.3's stop caps and SPEC 18 in full.
+#
+# Three of these cannot fire as configured, and all three are left alone -- see
+# DECISION D-014 sections 2, 3 and 4.  BACKTEST_PROTOCOL section 10.2 forbids moving a
+# parameter to make a result appear, and a check moved because it never fires is still
+# a parameter moved after seeing the outcome:
+#
+#   max_total_open_risk_pct  unreachable -- max_open_positions binds first, always
+#   min_realised_fraction    unreachable at 0.5 on any lot grid (k/(k+1) >= 1/2)
+#   max_sl_atr               unreachable under stop model S4 (1.5 ATR < 2.5 ATR)
+risk:
+  max_sl_atr: 2.5
+  max_sl_pips: {default: 60.0, JPY: 90.0}
+  min_sl_pips: {default: 8.0, JPY: 12.0}
+  pct_per_trade: 0.35
+  counter_monthly_multiplier: 0.5
+  max_total_open_risk_pct: 1.5
+  max_daily_loss_pct: 2.0
+  max_weekly_loss_pct: 4.0
+  max_monthly_loss_pct: 8.0
+  max_consecutive_losses: 5
+  consecutive_loss_pause_hours: 24
+  max_open_positions: 3
+  max_positions_per_symbol: 1
+  max_correlated_positions: 2
+  correlation_threshold: 0.70
+  correlation_window_days: 60
+  max_spread_pips: {default: 2.0, JPY: 3.5}
+  max_spread_pct_of_sl: 10.0
+  equity_dd_kill_pct: 10.0
+  # SPEC 18.5, as (drawdown_pct, multiplier).  Validated monotone non-increasing with no
+  # multiplier above 1.0 -- SPEC 18.1's anti-martingale invariant, enforced at load time
+  # so that no configuration can express its violation.
+  dd_ladder: [[5.0, 0.75], [8.0, 0.50]]
+  min_realised_fraction: 0.5
+
+# SPEC 18.2.  starting_equity is FROZEN for reporting only: it scales the equity curve
+# and not the edge, but it decides which trades the lot-granularity rejections eliminate,
+# so the Phase 13 report sweeps it rather than quoting it.
+account:
+  currency: USD
+  starting_equity: 10000.0
+
+# SPEC 18.6.  The file trigger exists because a kill switch that can only fire
+# automatically cannot be used by the person watching the screen.
+ops:
+  max_data_staleness_sec: 300
+  max_broker_errors: 5
+  kill_switch_file: KILL_SWITCH
+
+# symbol_specs (SPEC 1.4) is deliberately NOT written out here.  It is ten identical
+# standard-FX blocks that the schema's own factory produces, so spelling them out would
+# add no information and create a drift risk between the two.  Every value in it is a
+# declared default rather than a broker-measured one until Q1 picks a broker; the reports
+# say so wherever they use one.
+
+
 # SPEC 17.5: m1_path is the only correct option; `ohlc_heuristic` is prohibited by the
 # spec and is not offered as a value at all.
 backtest:

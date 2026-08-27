@@ -302,3 +302,49 @@ class Group:
         informative.
         """
         return float((self.returns > 0).mean()) if self.n else float("nan")
+
+
+# ------------------------------------------- effective number of independent tests
+
+
+def _eigenvalues(corr: np.ndarray) -> np.ndarray | None:
+    if corr.size == 0 or not np.all(np.isfinite(corr)):
+        return None
+    # Numerical noise can push a zero eigenvalue slightly negative; a variance
+    # decomposition cannot use one.
+    return np.clip(np.linalg.eigvalsh(corr), 0.0, None)
+
+
+def effective_tests(corr: np.ndarray) -> float:
+    """Effective number of independent tests, by Galwey's estimator.
+
+    ``M_eff = (sum_i sqrt(lambda_i))^2 / sum_i lambda_i`` over the eigenvalues of the
+    correlation matrix. This is the number the multiple-testing correction should use in
+    place of the nominal variant count (SPEC 13.8): reporting four when the variants
+    agree almost always over-corrects as badly as reporting one would under-correct.
+
+    **Galwey rather than the more commonly cited Li & Ji (2005), for a reason specific to
+    this study.** Li & Ji sums ``I(lambda >= 1) + frac(lambda)``, which is *discontinuous
+    at integer eigenvalues*: four perfectly correlated variants give eigenvalues
+    ``[4, 0, 0, 0]`` and it correctly returns 1, but perturbing the top eigenvalue to 3.99
+    -- which any real sample does -- makes ``floor`` drop to 3 and the estimate jumps to
+    **1.99**. Near-identical variants are precisely this study's subject, so the estimator
+    would be at its least stable exactly where it is needed.
+
+    Galwey is continuous and exact at every anchor point: ``[4,0,0,0] -> 1``,
+    ``[2,2,0,0] -> 2``, ``[1,1,1,1] -> 4``. ``li_ji_effective_tests`` is kept for
+    reference and pinned by a test that documents the discontinuity, but the reports use
+    this one. See D-012.
+    """
+    vals = _eigenvalues(corr)
+    if vals is None or vals.sum() <= 0:
+        return float("nan")
+    return float((np.sqrt(vals).sum() ** 2) / vals.sum())
+
+
+def li_ji_effective_tests(corr: np.ndarray) -> float:
+    """Li & Ji (2005), reported for reference only -- see ``effective_tests``."""
+    vals = _eigenvalues(corr)
+    if vals is None:
+        return float("nan")
+    return float(sum((1.0 if v >= 1.0 else 0.0) + (v - np.floor(v)) for v in vals))

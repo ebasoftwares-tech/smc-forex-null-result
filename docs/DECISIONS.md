@@ -1302,3 +1302,285 @@ its own.
 - **The M1 half of the gate is verified against synthetic M1.** It agrees with its own H4
   by construction, so what it establishes is that the two code paths implement the same
   rule — not that either matches a broker. Q2 is what makes it a real check.
+
+---
+
+## D-014 — Four defaults that cannot fire, and one model whose stop moves at fill
+
+| | |
+|---|---|
+| **Date** | 2026-08-27 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 13 implementation (risk management, SPEC 18, with SPEC 16 completed and SPEC 17.1/17.2 placed) |
+
+Phase 13's gate is *"every limit exercised by scenario; sizing purity test passes"*, and
+exercising every limit is what produced this entry. **Four of them cannot be reached by
+any legal configuration.** Three are arithmetic facts about pairs of FROZEN defaults, and
+one is a contradiction between two of them.
+
+None has been changed. `BACKTEST_PROTOCOL.md` §10.2 forbids moving a parameter to make a
+result appear, and that applies to a check as much as to a return: a default moved because
+it never fires is still a default moved after seeing the outcome. Each is written up here
+so the decision can be taken deliberately, and each is pinned by a test asserting the
+unreachability rather than the behaviour — so if a future change makes one reachable, the
+test that fails says why that matters.
+
+### 1. T3 cannot pass its own gate at the default `min_rr`
+
+SPEC 17.2 measures `rr = |tp_1 − entry| / sl_distance` and rejects below `tp.min_rr`,
+default **1.5**. SPEC 17.1 defines T3's ladder as *"50% at 1R, 25% at 2R, 25% at T2's
+opposing liquidity"*, so its `tp_1` — the **first** rung, which is what 17.2 measures — is
+at **1R**.
+
+`rr` is therefore 1.0 on every setup T3 will ever see, against a 1.5 floor. **T3 is
+rejected always**, and not because of anything about the market: the ratio does not depend
+on the setup at all, since both the target and the stop distance scale together.
+
+It is reachable at exactly one of the three declared ablation values for `min_rr`
+({1.0, 1.5, 2.0}) — the lowest. So the T1–T4 ablation, run as specified, tests T3 on
+one third of its grid and nowhere else.
+
+Three ways out, and the choice is a decision rather than an implementation detail:
+
+- **Gate T3 on its final rung** rather than its first. Defensible — the ladder's *purpose*
+  is the runner — but it means `tp_1` in 17.2 no longer means the same thing for every
+  model, and a gate whose subject varies by model is a gate that cannot be compared across
+  models.
+- **Exempt T3 from the gate**, as T4 already is by construction (§6 below). This makes the
+  ablation unpaired in one more place, which is the problem §6 is about.
+- **Accept that T3 is only defined at `min_rr` ≤ 1.0** and say so in the ablation grid.
+  The most honest of the three and the smallest change, but it means the headline
+  `min_rr = 1.5` configuration has three target models, not four.
+
+`tp.ladder_first_r` exists in the config (FROZEN, 1.0) so that the number 17.2 measures is
+declared rather than buried in the placement code, and `targets.gate_is_reachable` computes
+the answer from the configuration alone — because for T1 and T3 it is a property of the
+configuration and not of the data.
+
+### 2. `risk.max_total_open_risk_pct` is unreachable under every legal configuration
+
+SPEC 18.4 caps total open risk across all positions at **1.5%** and rejects a new trade
+that would breach it. SPEC 18.4 also caps concurrent positions at **3**, and SPEC 18.3
+bounds `risk.pct_per_trade` to **[0.10%, 0.50%]** — a bound the brief sets and this
+implementation now enforces at load time rather than documenting.
+
+    3 positions × 0.50% = 1.50%
+
+which is exactly the cap and therefore does not *breach* it. At the default 0.35% the
+ceiling is **1.05%**. Nothing in the risk layer can push it higher: the drawdown ladder
+only reduces `risk_pct` (§18.5) and `counter_monthly_multiplier` only reduces it (§18.3).
+
+**`max_open_positions` binds first, always.** The exposure cap is implemented and
+scenario-tested, and the scenario has to pass a `risk_pct` of 0.60% — outside the legal
+band — to reach it at all. That is recorded in the scenario's own note rather than hidden,
+because a battery in which one row is only reachable illegally should say so.
+
+This is defence in depth against a future configuration rather than a bug. But SPEC 18.9
+asks for every limit to be exercised, and a reader of that table is entitled to know which
+row was exercised by a legal input and which by a constructed one.
+
+### 3. `risk.min_realised_fraction` is provably dead at 0.5
+
+SPEC 18.2 rejects a trade whose lot-rounded risk falls below `min_realised_fraction` ×
+the intended risk, default **0.5**, and justifies it with a worked example: *"with
+`min_lot = 0.01` and a 26-pip stop, a €2,000 account at 0.25% risk wants 0.019 lots, floors
+to 0.01, and takes **half** the intended risk."*
+
+It cannot fire, for any lot grid, ever. Let `k = floor(raw_lots / lot_step)`. Sizing
+proceeds only when `lots = k × step ≥ min_lot`, so `k ≥ 1`, and by definition of the floor
+`raw_lots < (k+1) × step`. Then
+
+    realised / intended  =  k × step / raw_lots  >  k / (k+1)  ≥  1/2
+
+The ratio is **strictly greater than one half**, so `realised < 0.5 × intended` is never
+true. Flooring to a grid cannot lose more than half of what you asked for.
+
+Confirmed rather than only derived: **0 fires in 400,000 randomised sizings**, with the
+worst accepted fraction at **0.500081** — the infimum approached from above, exactly as
+the bound predicts. And on SPEC 18.2's own example the realised fraction is **0.52**, which
+the prose calls "half" and the threshold lets through. *The check does not catch the case
+the specification wrote it for.*
+
+The smallest threshold that would catch that example is anything above 0.52. Whether the
+right value is 0.75, or whether the check should be expressed as "reject if `raw_lots`
+would floor to `min_lot`" instead, is the decision. Left at 0.5 and pinned by
+`test_min_realised_fraction_is_unreachable_at_its_default`, with a positive control at 0.75
+so the check is known to work rather than only known to be silent.
+
+### 4. S4's stop is downstream of the entry price, and nothing else's is
+
+SPEC 16.1's table defines S1–S3 against structure — a sweep extreme, the lowest low of the
+setup window, an order block's distal edge — and S4 as `entry_price ∓ atr_multiple ×
+ATR_ref`. That one asymmetry has four consequences, none of which SPEC 16 mentions, because
+16 treats the stop as fixed once planned.
+
+**(a) `arm` must compute the entry price before the stop.** Phase 12 computed the stop
+first, which was correct when S1 was the only model. Reordered; S1–S3 are unaffected
+because their anchors do not depend on the price.
+
+**(b) Under S4, `PRICE_THROUGH_STOP` is vacuous.** That guard rejects a limit sitting at or
+beyond its own stop. Under S4 the stop is placed a fixed distance from the price by
+construction, so the two can never cross. The check is correct and unreachable for one
+model in four — which matters when reading a rejection table, because a zero there means
+*impossible*, not *did not happen*. Pinned by a test, with an S1 positive control on the
+same setup showing the guard does fire.
+
+**(c) Under S4, `sl.buffer_atr` is inert.** SPEC 16.1 gives S4 no buffer term. So the
+declared buffer ablation across {0.05, 0.10, 0.20} covers three of the four stop models,
+and a run reporting "buffer ablation" alongside "stop-model ablation" is reporting a grid
+with a hole in it.
+
+**(d) With a MARKET order, the S4 stop must be re-derived at fill.** Model A's planned
+price is a *placeholder* for `C_b`, the close SPEC 15.3 forbids using — the fill is next
+bar's open, or the first M1 price after latency. So under S4+market the planned stop is
+anchored to a price that was never obtainable. `trade.revalidate_at_fill` re-derives it,
+which SPEC 16.5 independently requires the caps to be re-run at (*"Both checks are
+required"*) for the unrelated reason that the spread moves.
+
+On the Phase 13 fixture the movement measures **exactly zero**, because `synthetic.py`
+emits a perfectly continuous walk and every bar opens at the previous close — the same
+reason SPEC 15.3's own lookahead measured 0.0000 ATR in Phase 12 (D-013 §3). The mechanism
+is pinned by constructed tests and is first in line to re-measure on real bars.
+
+**And a fifth, which is arithmetic between two FROZEN defaults.** S4's stop is 1.5 ATR and
+`risk.max_sl_pips` is 60 pips on a major, so **S4 is `SL_TOO_WIDE` on every setup once ATR
+exceeds 40 pips** (60 on a JPY cross, against its 90-pip cap). Mirror image: `max_sl_atr`
+is 2.5 and S4 is 1.5, so **under S4 the ATR cap can never fire** — the third unreachable
+check in this entry, and the only one that is model-conditional.
+
+Whether the ceiling binds is a measurement this fixture cannot make: its median H4 ATR is
+**17.4 pips**, well under 40, so S4 arms on all 165 setups here. Whether a real EURUSD H4
+series spends time above 40 pips of ATR decides whether S4 is a usable model or an
+unavailable one, and it is on the list for the first run on real bars.
+
+### 5. Which cap is doing the work is a measurement, not an assumption
+
+Two pairs of FROZEN defaults each contain one cap that is decoration, and *which* one
+depends on the data.
+
+**Upper stop caps.** `max_sl_atr` (2.5) and `max_sl_pips` (60) cross at
+`60 / 2.5 = 24 pips of ATR`. Below that ATR the ATR cap binds and the pip cap is
+decoration; above it, the reverse. On the fixture, whose median H4 ATR is 17.4 pips, the
+ATR cap binds on **100%** of setups. On a market with a 40-pip H4 ATR it would be the other
+way round entirely. `stops.dominant_upper_cap` computes it so the report measures this
+rather than assuming it.
+
+**Spread caps.** `max_spread_pips` (2.0 majors / 3.5 JPY) and `max_spread_pct_of_sl` (10%)
+cross at `absolute / 0.10` = **20 pips of stop** on a major and **35** on a JPY cross.
+Against SPEC 16.3's legal stop ranges ([8, 60] and [12, 90]) the relative cap is the binding
+one over the tightest **23%** and **29%** of each range — the tight-stop end, which is where
+a spread does the most damage. Both are inert until Q2 delivers a spread series;
+`risk.binding_spread_cap_pips` records which would bind.
+
+### 6. T4 is exempt from the RR gate, so the T1–T4 ablation is not paired
+
+SPEC 17.7 asks for *"paired T1–T4 variants on a shared setup stream"*. T4 (`structure_trail`)
+has no fixed target at all — it exits on the first opposing CHoCH — so there is no `tp_1`
+to divide by `sl_distance` and SPEC 17.2's gate cannot be applied to it.
+
+**T4 therefore accepts setups that T1–T3 reject.** The streams are not shared, and the
+difference is not random: it is exactly the setups whose nearest structural target sits
+inside 1.5R, which is a systematically different population, not a smaller sample of the
+same one.
+
+This is not fixable by implementation — it is what "no fixed target" means. What it
+requires is that any T1–T4 comparison state its populations, and that per-setup expectancy
+(SPEC 15.5's rule for the *entry* models, for the same reason) be the unit of comparison
+rather than per-trade. `TargetPlan.gate_applies` carries the flag so a downstream
+comparison cannot lose it silently.
+
+### 7. Four stop models are worth 1.36 tests, not 4
+
+D-012 established for the four order-block definitions that agreement makes them worth
+**1.77** independent tests, and that the multiple-testing correction has to use `M_eff`
+rather than the nominal variant count. SPEC 16.6 asks for the same paired-variant treatment
+of S1–S4, so the same arithmetic is now run for them:
+
+**`M_eff` = 1.36 over 160 setups**, by the same Galwey estimator D-012 §3b settled on, over
+the correlation of each model's ATR-normalised distance from the break bar's close.
+
+Lower than the order blocks', and the pairwise table says why: S1 and S2 produce the
+**identical price on 58.8%** of setups. S2 is the lowest low of a window that *starts* at
+the sweep extreme, so it differs from S1 only when some bar in the setup window went lower
+— and `invalidate.new_extreme_atr` caps how much lower it can go without killing the setup
+outright. They are close to one model with a rounding difference.
+
+Both an exact-agreement and a within-0.05-ATR column are reported, because D-012 §2 found
+exact agreement *understates* redundancy: two definitions picking different anchors at
+almost the same price are economically one and arithmetically two.
+
+The correlation is anchored on the **break bar's close**, which no stop model produced —
+D-012 §3a's rule, because centring on the per-observation mean across the variables being
+compared pins the average pairwise correlation at `−1/(k−1)`, a number about the centring
+rather than about the models.
+
+`effective_tests`, `li_ji_effective_tests` and `_eigenvalues` moved from
+`bot/research/ob_study.py` to `bot/research/stats.py` as part of this, following D-011 §3's
+rule that shared primitives live in `stats`. They are re-exported from `ob_study` so the
+Phase 11 report and its tests keep their original names.
+
+### 8. A testing lesson: two guarantees, one reachable test
+
+The drawdown ladder is protected twice — a config validator, so no configuration can
+*express* a multiplier above 1.0, and a clamp in `drawdown_multiplier`, so no arithmetic
+can *produce* one. Defence in depth, deliberately.
+
+**A mutation deleting the clamp survived the entire suite.** Every test reaching
+`drawdown_multiplier` builds its config through `load_config`, where the validator fires
+first — so no reachable input could distinguish a clamped implementation from an unclamped
+one. The clamp was untested precisely *because* the other guarantee worked.
+
+Fixed with a test that bypasses the validator (`model_copy`, which does not re-validate) to
+ask the second question directly. 15 of 15 mutations are now caught.
+
+The generalisable form, and the reason it is written down: **when two mechanisms enforce
+one rule, the outer one hides the inner one from every test that goes through the front
+door.** This is the fifth instance in this project of a check that looked fine and measured
+nothing (STATE.md §7), and the first where the cause was redundancy rather than imprecision.
+
+### 9. Scope: why half of SPEC 17 is in this phase
+
+SPEC 27 lists Phase 13 as "risk management" and SPEC 17 belongs to no phase explicitly.
+The split taken here:
+
+**In Phase 13** — SPEC 16 complete (S1–S4, the 16.2 buffer, the 16.3 caps), SPEC 17.1's
+target *placement* and 17.2's minimum-RR gate, SPEC 18 entire.
+
+**In Phase 14** — SPEC 17.3 (break-even, trailing), 17.4 (time and calendar exits), 17.5's
+intrabar resolution *for exits*, and the execution of T3's ladder and T4's trail.
+
+The line is SPEC 19's own: `RR_BELOW_MIN` fires in state CHOCH_CONFIRMED, alongside
+`SL_TOO_WIDE`/`SL_TOO_TIGHT` (16.3) and `SIZE_BELOW_MIN`/`SIZE_ABOVE_MAX`/`SIZE_UNDER_RISK`
+(18.2). Those three are the pre-trade rejections this phase's gate exists to exercise, and
+implementing two of the three would have left the gate half met. Everything in 17 that
+needs an *open* trade went to 14.
+
+SPEC 16 had to come here regardless: sizing takes `sl_distance` as an input, so a sizing
+test without the stop models tests arithmetic on a number nothing produced.
+
+### 10. Also deliberately left out
+
+- **`symbol.stops_level` is 0 points and `spread` is `None` everywhere.** SPEC 16.2's
+  buffer takes the max of an ATR term, a spread multiple and the broker's stops level; the
+  latter two need Q1 and Q2. Both are wired, scenario-tested with constructed values, and
+  contribute nothing to any number in the Phase 13 report. `spread=None` *omits* the term
+  rather than passing zero, so "no spread data" never reads as "the spread was zero".
+- **The FX conversion is exercised only where it is the identity.** Every number here is
+  EURUSD on a USD account, where `fx_rate(quote → account)` is 1. The conversion is
+  implemented and a missing rate **raises** rather than defaulting to 1.0 — SPEC 18.2's
+  "its absence blocks the inclusion of any symbol" as code, and the 40%-error case it warns
+  about is a JPY-pair case that needs the rate series.
+- **The correlation cap is scenario-tested on one symbol.** `correlation_clusters` builds
+  signed single-linkage clusters and `_signed_cluster` implements SPEC 18.7's directional
+  equivalence (long EURUSD and short USDCHF are one exposure), both pinned. What cluster
+  membership actually looks like on the ten majors is a multi-symbol measurement.
+- **`risk.counter_monthly_multiplier`** is declared and inert until the bias engine exists
+  (Phases 2–4), the same position as `bias.gate_mode` in the MSS engine (D-009).
+- **SPEC 18.8's live-only safety layer** — broker reconciliation, stop verification,
+  watchdog heartbeat — is Phase 17. SPEC 17.4's rule that no live behaviour may exist that
+  the backtest cannot reproduce is what keeps it out of the signal path, not out of scope.
+- **The limits-on / limits-off comparison SPEC 18.9 asks for is reported and does not yet
+  mean anything.** With no exit policy, the ledger fills to `max_open_positions` on the
+  third setup of each year and rejects everything after it. The switch is verified to work
+  and to leave the *strategy's* own rejections in place; the comparison it exists for needs
+  an equity curve, and is Phase 14's.

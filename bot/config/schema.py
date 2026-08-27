@@ -727,6 +727,296 @@ class BacktestConfig(Frozen):
     )
 
 
+class SymbolSpec(Frozen):
+    """SPEC 1.4 instrument metadata.
+
+    **These are declared defaults, not broker-measured values.** SPEC 1.4 says this table
+    is "resolved once from the broker and cached in the dataset manifest", and no broker
+    has been chosen (Q1). The values below are the standard FX retail configuration and
+    are right in shape; ``stops_level_points`` in particular is a per-broker, per-symbol
+    number that is 0 here only because 0 is the one value that cannot silently invent a
+    rejection. Every report that uses them says so.
+    """
+
+    digits: int = Field(5, ge=0, le=8, description="FROZEN. SPEC 1.4.")
+    contract_size: float = Field(
+        100_000.0, gt=0, description="FROZEN. SPEC 1.4 -- the FX standard lot."
+    )
+    lot_step: float = Field(0.01, gt=0, description="FROZEN. SPEC 18.2 quantisation.")
+    min_lot: float = Field(0.01, gt=0, description="FROZEN. SPEC 18.2.")
+    max_lot: float = Field(100.0, gt=0, description="FROZEN. SPEC 18.2.")
+    base_ccy: str = Field(
+        "EUR", min_length=3, max_length=3, description="FROZEN. SPEC 18.2 conversion."
+    )
+    quote_ccy: str = Field(
+        "USD", min_length=3, max_length=3, description="FROZEN. SPEC 18.2 conversion."
+    )
+    stops_level_points: int = Field(
+        0,
+        ge=0,
+        description=(
+            "FROZEN. SPEC 1.4 / 16.3 broker minimum stop distance, in points. 0 until a "
+            "broker is chosen (Q1) -- the only value that cannot invent a rejection."
+        ),
+    )
+
+    @property
+    def point(self) -> float:
+        return 10.0**-self.digits
+
+    @property
+    def pip_size(self) -> float:
+        """SPEC 1.4: ``10 x point`` when digits is 3 or 5, else ``point``."""
+        return self.point * 10.0 if self.digits in (3, 5) else self.point
+
+    @property
+    def stops_level(self) -> float:
+        return self.stops_level_points * self.point
+
+    @field_validator("base_ccy", "quote_ccy")
+    @classmethod
+    def _ccy_upper(cls, v: str) -> str:
+        return v.upper()
+
+    @model_validator(mode="after")
+    def _lots_consistent(self) -> "SymbolSpec":
+        if self.min_lot > self.max_lot:
+            raise ValueError("min_lot exceeds max_lot")
+        return self
+
+
+def _fx_specs() -> dict[str, "SymbolSpec"]:
+    """The v1.0 symbol universe (SPEC 1.4), all standard-configuration FX."""
+    pairs = (
+        "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD",
+        "USDCHF", "NZDUSD", "EURJPY", "GBPJPY", "EURGBP",
+    )
+    return {
+        p: SymbolSpec(digits=3 if p.endswith("JPY") else 5, base_ccy=p[:3], quote_ccy=p[3:])
+        for p in pairs
+    }
+
+
+class AccountConfig(Frozen):
+    """SPEC 18.2 -- the account the sizing arithmetic is denominated in."""
+
+    currency: str = Field(
+        "USD",
+        min_length=3,
+        max_length=3,
+        description="FROZEN. DECISION D-003 (Q1): raw-spread ECN, USD or EUR.",
+    )
+    starting_equity: float = Field(
+        10_000.0,
+        gt=0,
+        description=(
+            "FROZEN for reporting. Equity scales the equity curve and not the edge -- but "
+            "it decides which trades SPEC 18.2's lot-granularity rejections eliminate, "
+            "which is why the Phase 13 report sweeps it rather than quoting one value."
+        ),
+    )
+
+    @field_validator("currency")
+    @classmethod
+    def _upper(cls, v: str) -> str:
+        return v.upper()
+
+
+class TpConfig(Frozen):
+    """SPEC 17.1 / 17.2 -- target PLACEMENT and the minimum-RR gate.
+
+    Phase 13 implements placement and the gate because ``RR_BELOW_MIN`` fires in
+    CHOCH_CONFIRMED (SPEC 19 item 16), alongside the SPEC 16.3 stop caps and the SPEC
+    18.2 sizing rejections -- the three co-located pre-trade rejections this phase's gate
+    exists to exercise.
+
+    **Management is deliberately not implemented here.** 17.3's break-even and trailing,
+    17.4's time and calendar exits, and the *execution* of T3's ladder and T4's trail all
+    need an open trade, and belong with the exit policy in Phase 14.
+    """
+
+    model: Literal[
+        "fixed_r", "opposing_liquidity", "partial_ladder", "structure_trail"
+    ] = Field(
+        "fixed_r",
+        description=(
+            "ABLATION T1-T4. SPEC 17.1. [Phase 13 places T1/T2 and gates all four; T3/T4 "
+            "execution needs an open trade.]"
+        ),
+    )
+    r_multiple: float = Field(
+        2.0, gt=0, description="TUNABLE {1.5, 2.0, 2.5, 3.0}. SPEC 17.1, T1 only."
+    )
+    min_rr: float = Field(1.5, ge=0, description="ABLATION {1.0, 1.5, 2.0}. SPEC 17.2.")
+    below_min_rr_action: Literal["skip"] = Field(
+        "skip",
+        description=(
+            "FROZEN. SPEC 17.2. `fixed_fallback` is named there as the alternative and "
+            "rejected in the same paragraph -- it contaminates the T2 population with T1 "
+            "trades -- so it is not offered as a value at all."
+        ),
+    )
+    min_target_rank: float = Field(2.0, ge=0, description="FROZEN. SPEC 17.1, T2 only.")
+    target_buffer_atr: float = Field(
+        0.15,
+        ge=0,
+        description=(
+            "FROZEN. SPEC 17.1, T2 only -- the order sits in front of the level, not at it."
+        ),
+    )
+    ladder_first_r: float = Field(
+        1.0,
+        gt=0,
+        description=(
+            "FROZEN. SPEC 17.1, T3 only: the first rung of the ladder, and therefore the "
+            "`tp_1` the SPEC 17.2 gate measures. See DECISION D-014 section 1 -- at this "
+            "value T3 cannot pass the default `min_rr`, and that is a specification "
+            "contradiction rather than a tuning opportunity."
+        ),
+    )
+
+
+class RiskConfig(Frozen):
+    """SPEC 16.3's stop caps and SPEC 18 in full.
+
+    Per-symbol caps are keyed by symbol with a ``JPY`` family fallback and a ``default``
+    fallback, so a symbol added later inherits the right family rather than silently
+    inheriting a major's pip counts.
+    """
+
+    # --- SPEC 16.3, the stop-distance caps ---
+    max_sl_atr: float = Field(2.5, gt=0, description="FROZEN. SPEC 16.3.")
+    max_sl_pips: dict[str, float] = Field(
+        default_factory=lambda: {"default": 60.0, "JPY": 90.0},
+        description="FROZEN. SPEC 16.3 -- 60 majors / 90 JPY crosses.",
+    )
+    min_sl_pips: dict[str, float] = Field(
+        default_factory=lambda: {"default": 8.0, "JPY": 12.0},
+        description="FROZEN. SPEC 16.3 -- 8 majors / 12 JPY crosses.",
+    )
+
+    # --- SPEC 18.3, risk per trade ---
+    pct_per_trade: float = Field(
+        0.35,
+        ge=0.10,
+        le=0.50,
+        description=(
+            "TUNABLE, bounded [0.10, 0.50] by the brief (SPEC 18.3). Percent, not a "
+            "fraction. The bound is enforced here rather than merely documented: SPEC "
+            "18.1's anti-martingale invariant is only as strong as the largest number the "
+            "risk layer can be asked for."
+        ),
+    )
+    counter_monthly_multiplier: float = Field(
+        0.5,
+        gt=0,
+        le=1.0,
+        description="FROZEN. SPEC 18.3 -- inert until the bias engine lands (Phases 2-4).",
+    )
+    max_total_open_risk_pct: float = Field(
+        1.5,
+        gt=0,
+        description=(
+            "FROZEN. SPEC 18.4. **Unreachable under every legal configuration** -- see "
+            "DECISION D-014 section 2: max_open_positions x pct_per_trade reaches exactly "
+            "this value at the very top of the tunable band and sits below it everywhere "
+            "else, so max_open_positions always binds first."
+        ),
+    )
+
+    # --- SPEC 18.4, the hard limits ---
+    max_daily_loss_pct: float = Field(2.0, gt=0, description="FROZEN. SPEC 18.4, closed PnL.")
+    max_weekly_loss_pct: float = Field(4.0, gt=0, description="FROZEN. SPEC 18.4, closed PnL.")
+    max_monthly_loss_pct: float = Field(
+        8.0, gt=0, description="FROZEN. SPEC 18.4 -- manual re-enable, unlike daily/weekly."
+    )
+    max_consecutive_losses: int = Field(5, ge=1, description="FROZEN. SPEC 18.4.")
+    consecutive_loss_pause_hours: int = Field(24, ge=0, description="FROZEN. SPEC 18.4.")
+    max_open_positions: int = Field(3, ge=1, description="FROZEN. SPEC 18.4.")
+    max_positions_per_symbol: int = Field(1, ge=1, description="FROZEN. SPEC 18.4.")
+    max_correlated_positions: int = Field(2, ge=1, description="FROZEN. SPEC 18.4 / 18.7.")
+    correlation_threshold: float = Field(0.70, ge=0, le=1.0, description="FROZEN. SPEC 18.7.")
+    correlation_window_days: int = Field(60, ge=2, description="FROZEN. SPEC 18.7.")
+    max_spread_pips: dict[str, float] = Field(
+        default_factory=lambda: {"default": 2.0, "JPY": 3.5},
+        description="FROZEN. SPEC 18.4 -- inert until real spread data (Q1/Q2).",
+    )
+    max_spread_pct_of_sl: float = Field(
+        10.0,
+        gt=0,
+        description=(
+            "FROZEN. SPEC 18.4, percent. Binds instead of the absolute cap for every "
+            "stop under 20 pips (majors) or 35 pips (JPY) -- the tightest 23% and 29% of "
+            "each legal stop range. See DECISION D-014 section 5."
+        ),
+    )
+    equity_dd_kill_pct: float = Field(
+        10.0,
+        gt=0,
+        description=(
+            "FROZEN. SPEC 18.4 / 18.6 -- measured on equity INCLUDING floating PnL, "
+            "unlike the loss limits, which are closed-PnL only."
+        ),
+    )
+
+    # --- SPEC 18.5, the drawdown ladder ---
+    dd_ladder: list[tuple[float, float]] = Field(
+        default_factory=lambda: [(5.0, 0.75), (8.0, 0.50)],
+        description=(
+            "FROZEN. SPEC 18.5, as (drawdown_pct_threshold, multiplier) pairs. Validated "
+            "monotone non-increasing with no multiplier above 1.0 -- SPEC 18.1's "
+            "anti-martingale invariant at portfolio level, enforced at load time so that "
+            "no configuration can express its violation."
+        ),
+    )
+
+    # --- SPEC 18.2, the sizing rejections ---
+    min_realised_fraction: float = Field(
+        0.5,
+        gt=0,
+        le=1.0,
+        description=(
+            "FROZEN. SPEC 18.2. **Provably unreachable at 0.5** on any lot grid -- "
+            "flooring to a step can never lose more than half the intended risk -- so the "
+            "check is dead at its own default, including on the worked example SPEC 18.2 "
+            "uses to justify it. See DECISION D-014 section 3. Deliberately not changed "
+            "here: that is a decision to be taken explicitly, not an implementation detail."
+        ),
+    )
+
+    @field_validator("dd_ladder")
+    @classmethod
+    def _ladder_monotone(cls, v: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        if not v:
+            return v
+        thresholds = [t for t, _ in v]
+        mults = [m for _, m in v]
+        if thresholds != sorted(thresholds) or len(set(thresholds)) != len(thresholds):
+            raise ValueError("dd_ladder thresholds must be strictly increasing")
+        if any(m > 1.0 for m in mults):
+            raise ValueError("dd_ladder multiplier above 1.0 violates SPEC 18.1")
+        if mults != sorted(mults, reverse=True):
+            raise ValueError("dd_ladder multipliers must be non-increasing (SPEC 18.5)")
+        if any(m <= 0.0 for m in mults):
+            raise ValueError("dd_ladder multiplier must be positive")
+        return v
+
+
+class OpsConfig(Frozen):
+    """SPEC 18.6 -- the non-market kill-switch triggers."""
+
+    max_data_staleness_sec: int = Field(300, ge=1, description="FROZEN. SPEC 18.6.")
+    max_broker_errors: int = Field(5, ge=1, description="FROZEN. SPEC 18.6, per hour.")
+    kill_switch_file: str = Field(
+        "KILL_SWITCH",
+        description=(
+            "FROZEN. SPEC 18.6 -- the manual file trigger exists because a kill switch "
+            "that can only fire automatically cannot be used by the person watching the "
+            "screen."
+        ),
+    )
+
+
 class AppConfig(Frozen):
     """The fully resolved configuration.  Hashed to produce ``config_hash``."""
 
@@ -747,11 +1037,19 @@ class AppConfig(Frozen):
     setup: SetupConfig = SetupConfig()
     entry: EntryConfig = EntryConfig()
     sl: SlConfig = SlConfig()
+    tp: TpConfig = TpConfig()
+    risk: RiskConfig = RiskConfig()
+    account: AccountConfig = AccountConfig()
+    ops: OpsConfig = OpsConfig()
     exec: ExecConfig = ExecConfig()
     backtest: BacktestConfig = BacktestConfig()
     fvg: FvgConfig = FvgConfig()
     eq: EqualLevelsConfig = EqualLevelsConfig()
     range: RangeConfig = RangeConfig()
+    symbol_specs: dict[str, SymbolSpec] = Field(
+        default_factory=_fx_specs,
+        description="FROZEN. SPEC 1.4 -- declared defaults, not broker-measured (Q1).",
+    )
 
     @field_validator("symbols")
     @classmethod

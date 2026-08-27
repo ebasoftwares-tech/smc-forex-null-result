@@ -121,16 +121,15 @@ bot/
     fvg.py             §12 detection, lifecycle, selection            [Phase 8/10]
     mss.py             §11 CHoCH reference selection, MSS confirmation    [Phase 9]
     order_blocks.py    §13 four definitions, zones, lifecycle           [Phase 11]
-    entries.py         §15 five models, fill resolution, S1 stop        [Phase 12]
+    entries.py         §15 five models, fill resolution, arming          [Phase 12]
+    stops.py           §16 S1-S4, the 16.2 buffer, the 16.3 caps         [Phase 13]
+    targets.py         §17.1/17.2 placement + the minimum-RR gate        [Phase 13]
+    risk.py            §18 sizing (pure), the ledger, limits, killswitch [Phase 13]
+    trade.py           the pre-trade chain: 16.3 -> 17.2 -> 18.2 -> 18.4 [Phase 13]
   strategy/
     setup.py           §14 Setup object
     machine.py         STATE_MACHINE.md transition table (data-driven, not if/else)
-    stops.py           §16
-    targets.py         §17
-  risk/
-    sizing.py          §18.2, pure function, no history
-    limits.py          §18.4–18.7
-    killswitch.py      §18.6
+  risk/                ← planned home of §18; see the note below
   execution/
     broker.py          §4 Protocol
     mt5_broker.py      live adapter
@@ -139,6 +138,16 @@ bot/
     engine.py          bar loop, exactly the §4 ordering of STATE_MACHINE.md
     costs.py           spread / commission / swap / slippage models
     metrics.py, walkforward.py, montecarlo.py, ablation.py
+
+  # NOTE (Phase 13). §16, §17.1/17.2 and §18 were planned above for `strategy/` and
+  # `risk/` and were built in `core/` instead, following the precedent `entries.py` (§15)
+  # set in Phase 12. The criterion that actually matters for `core/` is the one in its own
+  # docstring -- pure, no I/O, no clock, no broker -- and all four satisfy it, including
+  # `risk.py`'s `RiskLedger`, which is stateful but takes its clock as a parameter. Three
+  # new top-level packages for four modules would have fragmented a layer that reads as
+  # one. `risk/` stays in this map because §18.8's live-only safety layer (broker
+  # reconciliation, stop verification, watchdog heartbeat) genuinely does not belong in a
+  # pure package, and is Phase 17's.
   research/            ← the falsification suite (BACKTEST_PROTOCOL §6)
     sweep_study.py     §9.7 forward-return study of sweeps (H2)               [Phase 7]
     displacement_study.py  §10.6 threshold distribution + rejection rates  [Phase 8]
@@ -146,6 +155,7 @@ bot/
     fvg_study.py       §12.6 standalone FVG edge test                    [Phase 10]
     ob_study.py        §13.8 bake-off, agreement matrix, M_eff          [Phase 11]
     stats.py           shared bootstrap / power / verdict primitives     [Phase 10]
+    risk_study.py      §18.9 limit scenarios, stop bake-off, account sweep [Phase 13]
     marginal_value.py  §6.2 MSS vs CHoCH-not-MSS (tests H5)                  [study]
   reporting/
     charts.py          renders from events.jsonl only

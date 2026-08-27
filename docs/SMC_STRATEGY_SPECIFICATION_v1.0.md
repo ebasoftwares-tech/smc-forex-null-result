@@ -2095,11 +2095,13 @@ For a **BUY** (mirror for SELL):
 | **S1** | `sweep_extreme` (**default**) | `sweep_extreme − buffer` |
 | **S2** | `structural_swing` | `min(L over [s..b]) − buffer` — the lowest low of the whole setup window |
 | **S3** | `order_block` | `OB.distal_edge − buffer` (requires an OB) |
-| **S4** | `atr` | `entry_price − sl.atr_multiple × ATR_ref` (default 1.5) |
+| **S4** | `atr` | `entry_price − sl.atr_multiple × ATR_ref` (default 1.5). **Note (D-014 §4): this is the only model whose stop is downstream of the entry price, and the only one with no buffer term.** Four consequences follow — `arm` must price before it stops; `PRICE_THROUGH_STOP` is vacuous under S4; `sl.buffer_atr` is inert under S4; and with a MARKET order the stop must be re-derived at fill, because the planned price is a placeholder for the `C_b` §15.3 forbids using |
 | **S5** | `entry_minus_fixed_r` | Derived from a target R and the TP level; **rejected for v1.0** — sizing the stop from the target inverts the logic and guarantees the stop sits at a structurally arbitrary price |
 
 S1 is the default because the sweep extreme is the price at which the setup's premise is
 falsified: below it, the "sweep" was a breakout.
+
+**S1 and S2 are near-duplicates, measured (D-014 §7).** S2's window *starts* at the sweep extreme, so it differs from S1 only when a bar inside the setup window went lower — and `invalidate.new_extreme_atr` caps how much lower it can go without killing the setup. They produce the identical price on **58.8%** of Phase 13's setups, and the four models together are worth **`M_eff` = 1.36** independent tests rather than 4. Use that number in §16.6's correction, not the variant count.
 
 ### 16.2 Buffer
 
@@ -2124,6 +2126,10 @@ REJECT if  sl_distance < risk.min_sl_pips[symbol]         (default 8 / 12)
 REJECT if  sl_distance < symbol.stops_level               (broker minimum)
 REJECT if  computed_lots < symbol.min_lot                 (§18.2)
 ```
+
+**Which of the two upper caps binds is a property of the data, not a design choice (D-014 §5).** `max_sl_atr` and `max_sl_pips` cross at `max_sl_pips / max_sl_atr` = **24 pips of ATR** on a major: below that ATR the ATR cap binds and the pip cap is decoration; above it, the reverse. Phase 13's fixture (median H4 ATR 17.4 pips) sits entirely on one side. Re-measure before treating either as the live constraint.
+
+**Two of these caps are unreachable in specific configurations, and both are arithmetic rather than empirical (D-014 §4).** S4's stop is `atr_multiple × ATR` = 1.5 ATR, so under S4 `max_sl_atr` (2.5) can never fire, while `max_sl_pips` rejects S4 outright once ATR exceeds **40 pips** on a major (60 on a JPY cross). S4 is therefore an unavailable model, not merely a wide one, above that ATR.
 
 **MUST NOT** move the stop closer to satisfy a constraint. Tightening a stop to fit a risk cap
 converts a rejected setup into a low-quality trade with a structurally wrong stop — and it
@@ -2169,8 +2175,8 @@ which distinguishes "stop too tight" from "idea wrong".
 |---|---|---|
 | **T1** | `fixed_r` (**default**) | `entry ± tp.r_multiple × sl_distance`, `r_multiple ∈ {1.5, 2.0, 2.5, 3.0}` tested |
 | **T2** | `opposing_liquidity` | The nearest ACTIVE opposing-side liquidity level with `rank_score ≥ tp.min_target_rank`, minus `tp.target_buffer_atr × ATR_ref` (default 0.15) so the order sits in front of the level rather than at it |
-| **T3** | `partial_ladder` | 50% at 1R, 25% at 2R, 25% at T2's opposing liquidity; SL to breakeven after the first partial |
-| **T4** | `structure_trail` | No fixed target; exit on the first opposing CHoCH on the confirmation TF |
+| **T3** | `partial_ladder` | 50% at 1R, 25% at 2R, 25% at T2's opposing liquidity; SL to breakeven after the first partial. **Note (D-014 §1): `tp_1` is the 1R rung, so §17.2's gate rejects T3 on every setup at the default `min_rr` = 1.5.** T3 is reachable at exactly one of the three declared ablation values (1.0). Needs an explicit decision, not a parameter edit |
+| **T4** | `structure_trail` | No fixed target; exit on the first opposing CHoCH on the confirmation TF. **Note (D-014 §6): with no `tp_1`, §17.2's gate cannot apply — so T4 accepts the setups T1–T3 reject and the four variants do not run on a shared stream** |
 
 ### 17.2 The minimum-RR gate
 
@@ -2178,6 +2184,8 @@ which distinguishes "stop too tight" from "idea wrong".
 rr = |tp_1 − entry| / sl_distance
 REJECT if rr < tp.min_rr        (default 1.5)
 ```
+
+**Two models sit outside this gate as written, and neither is a bug in the implementation (D-014 §1, §6).** T3's `tp_1` is 1R, so `rr` is 1.0 by construction and T3 fails at any `min_rr` above 1.0. T4 has no `tp_1` at all, so the gate is inapplicable and T4 takes a systematically different population — the setups whose nearest structural target sits inside `min_rr`. Both need a decision before §17.7's paired comparison means anything.
 
 `tp.below_min_rr_action ∈ {skip, fixed_fallback}` = **skip** (default). Falling back to a fixed
 R target when the structural target is too close means taking the trade without the reason for
@@ -2240,7 +2248,7 @@ zero the ladder degrades to the next model (`T1` at the final target) and the tr
 
 ### 17.7 Backtest
 
-Paired T1–T4 variants on a shared setup stream. Additionally, the **MAE/MFE study**: for every
+Paired T1–T4 variants on a shared setup stream — **which is not what T3 and T4 currently produce (D-014 §1, §6): T3 arms on no setup at the default `min_rr`, and T4 arms on a superset of T1–T2's.** State the populations, and compare per SETUP rather than per trade, for the same reason §15.5 gives for the entry models. Additionally, the **MAE/MFE study**: for every
 trade, maximum adverse and favourable excursion in R. The MFE distribution is what determines
 whether any fixed-R target is well-placed, and it is computed once and reused for all target
 models rather than re-optimising the target on the same trades that will report the result.
@@ -2287,6 +2295,8 @@ REJECT if lots > symbol.max_lot                        reason SIZE_ABOVE_MAX
 REJECT if actual_risk < risk.min_realised_fraction × risk_amount    (default 0.5)
 ```
 
+**The last check cannot fire at its default, and does not catch the example below (D-014 §3).** With `lots = k × lot_step` and `raw_lots < (k+1) × lot_step`, the realised fraction exceeds `k/(k+1) ≥ 1/2` for every lot grid — so `realised < 0.5 × risk_amount` is never true. Measured: 0 fires in 400,000 randomised sizings, worst accepted fraction 0.500081. The example below lands at **0.52**. A threshold above that, or a rule expressed as "reject if `raw_lots` floors to `min_lot`", would catch it; both are decisions, and the default is unchanged pending one.
+
 The last check catches lot-granularity distortion on small accounts: with `min_lot = 0.01` and
 a 26-pip stop, a €2,000 account at 0.25% risk wants 0.019 lots, floors to 0.01, and takes
 **half** the intended risk. Silently under-risking half the trades makes every per-trade
@@ -2304,7 +2314,7 @@ inclusion of any symbol whose quote currency is not the account currency.
 |---|---|---|
 | `risk.pct_per_trade` | **0.35%** | Within the brief's 0.25–0.5% band. TUNABLE only within [0.10, 0.50] |
 | `risk.counter_monthly_multiplier` | 0.5 | Applied when `bias.counter_monthly_action = derisk` |
-| `risk.max_total_open_risk_pct` | 1.5% | Sum of open risk across all positions. A new trade is rejected if it would breach this |
+| `risk.max_total_open_risk_pct` | 1.5% | Sum of open risk across all positions. A new trade is rejected if it would breach this. **Unreachable under every legal configuration (D-014 §2): `max_open_positions` (3) × the top of `pct_per_trade`'s band (0.50%) is exactly 1.5%, which does not breach 1.5%; at the 0.35% default the ceiling is 1.05%. The position count always binds first, and the drawdown ladder can only lower the total** |
 
 ### 18.4 Hard limits (all measured on **closed** PnL unless stated)
 
@@ -2314,7 +2324,7 @@ inclusion of any symbol whose quote currency is not the account currency.
 | Weekly loss | `risk.max_weekly_loss_pct` | 4.0% | Halt until the next week boundary |
 | Monthly loss | `risk.max_monthly_loss_pct` | 8.0% | Halt until the next month boundary; requires manual re-enable |
 | Consecutive losses | `risk.max_consecutive_losses` | 5 | Halt for `risk.consecutive_loss_pause_hours` (default 24) |
-| Concurrent positions | `risk.max_open_positions` | 3 | Reject |
+| Concurrent positions | `risk.max_open_positions` | 3 | Reject. **This is what actually binds** — see the open-risk row |
 | Per symbol | `risk.max_positions_per_symbol` | 1 | Reject |
 | Correlated cluster | `risk.max_correlated_positions` | 2 | §18.7 |
 | Spread at entry | `risk.max_spread_pips[symbol]` | 2.0 / 3.5 JPY | Reject |
@@ -2374,7 +2384,7 @@ that every open position has a broker-side stop; heartbeat to the MQL5 watchdog
 - The realised distribution of risk-per-trade is reported: it MUST be a spike at
   `risk.pct_per_trade` with a lower tail only from lot rounding. Any mass above the nominal
   value is a sizing bug.
-- Reported both with limits **on** and **off**. Limits change the equity path but must not be
+- Reported both with limits **on** and **off**. **This comparison needs an equity curve and is therefore Phase 14's, not Phase 13's (D-014 §10):** with no exit policy the ledger fills to `max_open_positions` and rejects everything after it, so the limits-on column measures the absence of exits rather than the effect of the limits. Limits change the equity path but must not be
   what creates the edge; a strategy that is only profitable with a daily loss limit engaged is
   a strategy with a fragility the limit is hiding.
 

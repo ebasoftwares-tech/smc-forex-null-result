@@ -219,11 +219,11 @@ Classification key: **F** = FROZEN, **A** = ABLATION, **T** = TUNABLE.
 | Parameter | Default | Class |
 |---|---|---|
 | `sl.model` | sweep_extreme (S1) | **A** (S1–S4) |
-| `sl.buffer_atr` | 0.10 | **A** {0.05, 0.10, 0.20} |
+| `sl.buffer_atr` | 0.10 | **A** {0.05, 0.10, 0.20} — **inert under S4, which has no buffer term** (D-014 §4) |
 | `sl.buffer_spread_mult` | 2.0 | F |
 | `sl.atr_multiple` | 1.5 | F (S4 only) |
-| `risk.max_sl_atr` | 2.5 | F |
-| `risk.max_sl_pips` | 60 / 90 JPY | F |
+| `risk.max_sl_atr` | 2.5 | F — binds below 24 pips of ATR; **cannot fire at all under S4** (D-014 §4, §5) |
+| `risk.max_sl_pips` | 60 / 90 JPY | F — binds above 24 pips of ATR; **rejects S4 outright above 40 / 60** (D-014 §4) |
 | `risk.min_sl_pips` | 8 / 12 JPY | F |
 
 ### 3.14 Targets and management (§17)
@@ -232,11 +232,11 @@ Classification key: **F** = FROZEN, **A** = ABLATION, **T** = TUNABLE.
 |---|---|---|
 | `tp.model` | fixed_r (T1) | **A** (T1–T4) |
 | `tp.r_multiple` | 2.0 | **T** |
-| `tp.min_rr` | 1.5 | **A** {1.0, 1.5, 2.0} |
+| `tp.min_rr` | 1.5 | **A** {1.0, 1.5, 2.0} — **T3 passes only at 1.0** (D-014 §1) |
 | `tp.below_min_rr_action` | skip | F |
 | `tp.min_target_rank` | 2.0 | F (T2 only) |
 | `tp.target_buffer_atr` | 0.15 | F |
-| `tp.ladder` | 50%@1R, 25%@2R, 25%@liq | F (T3 only) |
+| `tp.ladder` | 50%@1R, 25%@2R, 25%@liq | F (T3 only). `tp.ladder_first_r` = 1.0 is the `tp_1` §17.2 measures — **so T3 is rejected on every setup at the default `min_rr`** (D-014 §1) |
 | `manage.be_trigger_r` | 0.0 (off) | **A** {off, 1.0, 1.5} |
 | `manage.be_offset_atr` | 0.05 | F |
 | `manage.trail_mode` | none | **A** (none / structure / atr) |
@@ -251,9 +251,9 @@ Classification key: **F** = FROZEN, **A** = ABLATION, **T** = TUNABLE.
 
 | Parameter | Default | Class |
 |---|---|---|
-| `risk.pct_per_trade` | 0.35% | **T** (bounded 0.10–0.50) |
+| `risk.pct_per_trade` | 0.35% | **T** (bounded 0.10–0.50, now **enforced** at load time, not just documented) |
 | `risk.counter_monthly_multiplier` | 0.5 | F |
-| `risk.max_total_open_risk_pct` | 1.5% | F |
+| `risk.max_total_open_risk_pct` | 1.5% | F — **unreachable: `max_open_positions` always binds first** (D-014 §2) |
 | `risk.max_daily_loss_pct` | 2.0% | F |
 | `risk.max_weekly_loss_pct` | 4.0% | F |
 | `risk.max_monthly_loss_pct` | 8.0% | F |
@@ -264,11 +264,29 @@ Classification key: **F** = FROZEN, **A** = ABLATION, **T** = TUNABLE.
 | `risk.max_correlated_positions` | 2 | F |
 | `risk.correlation_threshold` | 0.70 | F |
 | `risk.correlation_window_days` | 60 | F |
-| `risk.max_spread_pips` | 2.0 / 3.5 JPY | F |
-| `risk.max_spread_pct_of_sl` | 10% | F |
+| `risk.max_spread_pips` | 2.0 / 3.5 JPY | F — inert until Q2 delivers a spread series |
+| `risk.max_spread_pct_of_sl` | 10% | F — binds below a 20-pip (35 JPY) stop, i.e. the tightest 23% / 29% of the legal range (D-014 §5). Inert until Q2 |
 | `risk.equity_dd_kill_pct` | 10% | F |
 | `risk.dd_ladder` | 5/8/10% → ×0.75/0.50/kill | F — **monotone non-increasing, asserted by test** |
-| `risk.min_realised_fraction` | 0.5 | F |
+| `risk.min_realised_fraction` | 0.5 | F — **provably cannot fire at 0.5 on any lot grid** (D-014 §3) |
+
+### 3.15a Instrument metadata and the account (SPEC 1.4, 18.2)
+
+Declared in `config/schema.py` as `symbol_specs` and `account`. **These are declared
+defaults, not broker-measured values** — SPEC 1.4 resolves this table from the broker and
+no broker has been chosen (Q1).
+
+| Parameter | Default | Class |
+|---|---|---|
+| `symbol_specs[*].digits` | 5 (3 for JPY) | F |
+| `symbol_specs[*].contract_size` | 100,000 | F |
+| `symbol_specs[*].lot_step` / `min_lot` / `max_lot` | 0.01 / 0.01 / 100 | F |
+| `symbol_specs[*].stops_level_points` | **0** | F — the only value that cannot invent a rejection before Q1 |
+| `account.currency` | USD | F (D-003, Q1) |
+| `account.starting_equity` | 10,000 | F for reporting — **swept, never quoted**, since it decides which trades §18.2's lot-granularity rejections eliminate |
+| `ops.max_data_staleness_sec` | 300 | F |
+| `ops.max_broker_errors` | 5/hour | F |
+| `ops.kill_switch_file` | `KILL_SWITCH` | F |
 
 ### 3.16 Execution and costs (§26)
 

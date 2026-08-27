@@ -35,10 +35,19 @@ they are where ``backtest.intrabar_mode`` earns its keep.
 ``ohlc_heuristic`` is prohibited by SPEC 17.5 and is deliberately not offered as a config
 value: an option that must never be selected should not be selectable.
 
-**Scope.** Phase 12 arms orders and resolves fills. It does not size them (SPEC 18,
-Phase 13), manage them (SPEC 17), or evaluate shadow trades (SPEC 15.6, which needs
-``exit.max_bars_in_trade``). Only stop model S1 is implemented, because ``cancel_if``
-clause 1 needs a planned stop before an order can be armed at all.
+**Scope.** Phase 12 arms orders and resolves fills. It does not size them (SPEC 18) or
+evaluate shadow trades (SPEC 15.6, which needs ``exit.max_bars_in_trade``, and belongs
+with the exit policy in Phase 14).
+
+Phase 13 added the other three stop models via ``bot.core.stops``, and with them one
+ordering constraint this module now has to respect: **the entry price is computed before
+the stop.** S1-S3 anchor the stop to structure, but S4 defines it as a fixed ATR distance
+from the *entry price*, so under S4 the stop is downstream of the price. Two consequences
+worth knowing before reading a rejection table: under S4 a limit can never be
+``PRICE_THROUGH_STOP`` (the stop is placed a fixed distance away by construction, so the
+guard is vacuous for one model in four), and under S4 with a MARKET order the planned
+price is a placeholder for a price that is never obtainable, so the stop has to be
+re-derived at fill. See D-014 section 4.
 """
 
 from __future__ import annotations
@@ -51,6 +60,7 @@ from typing import Sequence
 import numpy as np
 
 from bot.config.schema import AppConfig
+from bot.core import stops
 from bot.core.bars import BarSeries, from_epoch_s
 from bot.core.displacement import Direction
 from bot.core.fvg import Fvg, FvgDirection, select_fvg
@@ -164,18 +174,24 @@ def planned_stop(
     sweep_extreme: float,
     atr_value: float,
 ) -> float:
-    """SPEC 16.1 model S1, which is all Phase 12 needs.
+    """SPEC 16.1 model **S1 specifically** -- kept because a caller that wants S1 should
+    be able to say so without the answer depending on what ``cfg.sl.model`` is set to.
 
     The sweep extreme is the price at which the setup's premise is falsified: below it,
-    the "sweep" was a breakout. The buffer is SPEC 16.2's ATR term only -- its spread and
-    stops-level terms need a broker and real spread data (Q1/Q2), and inventing them
-    would make every stop a property of the invention.
+    the "sweep" was a breakout.
+
+    Phase 13 moved the general case to ``bot.core.stops``, which implements all four
+    models and SPEC 16.2's full three-term buffer. The buffer is still the ATR term in
+    practice: the spread term needs real spread data (Q2) and ``stops_level`` needs a
+    broker (Q1), so both are wired and inert.
     """
-    buffer = cfg.sl.buffer_atr * atr_value
-    return (
-        sweep_extreme - buffer
-        if direction is Direction.BULLISH
-        else sweep_extreme + buffer
+    return stops.planned_stop(
+        cfg,
+        direction=direction,
+        atr_value=atr_value,
+        sweep_extreme=sweep_extreme,
+        model=stops.StopModel.S1_SWEEP_EXTREME,
+        spec=stops.symbol_spec(cfg, series.symbol),
     )
 
 
@@ -209,12 +225,26 @@ def arm(
     fvgs: Sequence[Fvg] = (),
     order_block: OrderBlock | None = None,
     atr: np.ndarray | None = None,
+    sl_model: stops.StopModel | str | None = None,
+    setup_start_bar: int | None = None,
+    spread: float | None = None,
 ) -> ArmResult:
     """Arm one model's order on a confirmed MSS, or say why it could not.
 
     ``valid_from`` is ``close_time(mss_bar)``: SPEC 15.1 forbids an order existing before
     the MSS is confirmed, and the state machine treats that as an invariant rather than a
     guideline (SPEC 14.2 step 3).
+
+    **The entry price is computed before the stop, and that ordering is required** rather
+    than stylistic: SPEC 16.1's S4 defines the stop as ``entry_price -/+ atr_multiple x
+    ATR_ref``, so under S4 the stop is downstream of the price while under S1-S3 it is
+    not. Phase 12 could compute the stop first because only S1 existed. See D-014
+    section 4.
+
+    ``setup_start_bar`` is S2's window start -- the *sweep* bar, which is not the same as
+    ``leg_start``: SPEC 10's leg origin is clamped to the sweep extreme bar and may sit
+    after it. It defaults to ``leg_start`` so existing callers keep their behaviour, and
+    the Phase 13 report passes the sweep bar explicitly.
     """
     m = EntryModel(model or cfg.entry.model)
     if atr is None:
@@ -227,9 +257,13 @@ def arm(
         return ArmResult(m, None, ArmReject.NO_ATR)
     a = float(a)
 
-    stop = planned_stop(
-        series, cfg, direction=direction, sweep_extreme=sweep_extreme, atr_value=a
-    )
+    s_model = stops.StopModel(sl_model or cfg.sl.model)
+    if s_model is stops.StopModel.S3_ORDER_BLOCK and order_block is None:
+        # S3's input is missing for an ordinary business reason -- no order block was
+        # proposed for this setup -- so it is a rejection, not the ValueError that a
+        # genuinely malformed call gets from ``stops.planned_stop``.
+        return ArmResult(m, None, ArmReject.NO_OB_AVAILABLE)
+
     bullish = direction is Direction.BULLISH
     leg_low = float(series.low[leg_start : mss_bar + 1].min())
     leg_high = float(series.high[leg_start : mss_bar + 1].max())
@@ -280,6 +314,21 @@ def arm(
     else:  # pragma: no cover - the enum is exhaustive
         return ArmResult(m, None, ArmReject.DEGENERATE)
 
+    stop = stops.planned_stop(
+        cfg,
+        direction=direction,
+        atr_value=a,
+        sweep_extreme=sweep_extreme,
+        model=s_model,
+        series=series,
+        setup_start_bar=leg_start if setup_start_bar is None else setup_start_bar,
+        break_bar=mss_bar,
+        order_block=order_block,
+        entry_price=float(price),
+        spec=stops.symbol_spec(cfg, series.symbol),
+        spread=spread,
+    )
+
     # A limit already at or beyond its own stop is not an order, it is a loss waiting to
     # be booked. Rejected at arm time rather than cancelled on the first bar, so the
     # rejection log distinguishes "never armable" from "armed and then invalidated".
@@ -303,7 +352,7 @@ def arm(
                 series.close_time[min(expiry_bar, series.n - 1)]
             ),
             expires_at_bar=expiry_bar,
-            sl_model=cfg.sl.model,
+            sl_model=s_model.value,
             reference_id=ref_id,
         ),
     )

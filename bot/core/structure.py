@@ -33,6 +33,7 @@ import numpy as np
 
 from bot.config.schema import AppConfig
 from bot.core.bars import BarSeries, from_epoch_s
+from bot.core.ids import object_id
 from bot.core.indicators import atr_ref
 from bot.core.swings import Swing, SwingKind, SwingLabel, SwingStore, detect_at, swing_prices
 
@@ -209,8 +210,16 @@ class StructureEngine:
 
     def _emit(self, **kw) -> StructureEvent:
         self._seq += 1
+        i = kw["bar_index"]
         ev = StructureEvent(
-            id=f"{self.series.symbol}:{self.series.timeframe}:EV:{self._seq:05d}", **kw
+            id=object_id(
+                "EV",
+                symbol=self.series.symbol,
+                timeframe=self.series.timeframe,
+                at=from_epoch_s(self.series.close_time[i]),
+                key=(kw["type"].value, kw["side"].value, kw["level"]),
+            ),
+            **kw,
         )
         self.events.append(ev)
         self.state.last_event = ev

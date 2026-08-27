@@ -73,6 +73,71 @@ def bootstrap_diff_ci(
     return float(lo), float(hi)
 
 
+def bootstrap_ci(
+    x: np.ndarray,
+    n_boot: int,
+    rng: np.random.Generator,
+    alpha: float = ALPHA,
+    *,
+    block: int | None = None,
+) -> tuple[float, float]:
+    """Percentile bootstrap CI on ``mean(x)``, i.i.d. or stationary-block.
+
+    ``block`` implements BACKTEST_PROTOCOL section 5.3's stationary block bootstrap.
+    **Trades are not independent** -- same-day trades share a regime and correlated symbols
+    share a direction -- so an i.i.d. resample understates the uncertainty on anything
+    conditioned on a slow-moving variable. Resampling blocks of consecutive trades keeps
+    that dependence in the resample instead of averaging it away.
+
+    Block lengths are geometric with mean ``block``, which is what makes it *stationary*:
+    a fixed block length makes the resampled series' dependence structure depend on where
+    the blocks happen to land.
+    """
+    n = len(x)
+    if n < 2:
+        return (float("nan"), float("nan"))
+    if block is None or block <= 1:
+        idx = rng.integers(0, n, size=(n_boot, n))
+        means = x[idx].mean(axis=1)
+    else:
+        means = np.empty(n_boot, dtype=np.float64)
+        p_new = 1.0 / block
+        for b in range(n_boot):
+            take = np.empty(n, dtype=np.int64)
+            pos = int(rng.integers(0, n))
+            for k in range(n):
+                if k and rng.random() < p_new:
+                    pos = int(rng.integers(0, n))
+                take[k] = pos
+                pos = (pos + 1) % n
+            means[b] = x[take].mean()
+    lo, hi = np.quantile(means, [alpha / 2, 1 - alpha / 2])
+    return float(lo), float(hi)
+
+
+def effective_sample_size(x: np.ndarray, max_lag: int = 20) -> float:
+    """``n_eff`` from the autocorrelation of a trade sequence (protocol section 5.3).
+
+    ``n / (1 + 2 * sum_k rho_k)`` over positive leading autocorrelations. Reported next to
+    every ``n`` because a subgroup's ``n`` is not its information content when the trades
+    inside it overlap in time.
+    """
+    n = len(x)
+    if n < 8:
+        return float(n)
+    c = x - x.mean()
+    denom = float(np.dot(c, c))
+    if denom <= 0:
+        return float(n)
+    total = 0.0
+    for lag in range(1, min(max_lag, n - 1) + 1):
+        rho = float(np.dot(c[:-lag], c[lag:]) / denom)
+        if rho <= 0:
+            break
+        total += rho
+    return float(n / (1.0 + 2.0 * total))
+
+
 def permutation_p(
     a: np.ndarray, b: np.ndarray, n_perm: int, rng: np.random.Generator
 ) -> float:

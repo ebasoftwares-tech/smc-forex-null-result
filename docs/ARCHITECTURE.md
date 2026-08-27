@@ -126,6 +126,9 @@ bot/
     targets.py         §17.1/17.2 placement + the minimum-RR gate        [Phase 13]
     risk.py            §18 sizing (pure), the ledger, limits, killswitch [Phase 13]
     trade.py           the pre-trade chain: 16.3 -> 17.2 -> 18.2 -> 18.4 [Phase 13]
+    ids.py             §1.7 deterministic ULIDs -- bar clock, content key [Phase 14]
+    exits.py           §17.3-17.5 management, intrabar resolution, MAE/MFE [Phase 14]
+    costs.py           §26 spread, commission, slippage, swap             [Phase 14]
   strategy/
     setup.py           §14 Setup object
     machine.py         STATE_MACHINE.md transition table (data-driven, not if/else)
@@ -135,10 +138,17 @@ bot/
     mt5_broker.py      live adapter
     sim_broker.py      backtest adapter (fills, slippage, costs)
   backtest/
-    engine.py          bar loop, exactly the §4 ordering of STATE_MACHINE.md
-    costs.py           spread / commission / swap / slippage models
-    metrics.py, walkforward.py, montecarlo.py, ablation.py
+    engine.py          two passes: geometry (portfolio-free) then portfolio [Phase 14]
+    metrics.py         protocol §4 headline figures, breakdowns, E_setup    [Phase 14]
+    montecarlo.py      protocol §9 five resampling tests + concentration    [Phase 14]
+    walkforward.py     protocol §8 -- needs real splits
+    ablation.py        protocol §6.5
 
+  # NOTE (Phase 14). `costs.py` was planned above for `backtest/` and sits in `core/`:
+  # it is pure arithmetic over a config and a price, and `exits.py` needs it, so putting
+  # it in `backtest/` would make a core module import a backtest one. The bar loop, the
+  # metrics and the Monte Carlo suite are in `backtest/` as planned.
+  #
   # NOTE (Phase 13). §16, §17.1/17.2 and §18 were planned above for `strategy/` and
   # `risk/` and were built in `core/` instead, following the precedent `entries.py` (§15)
   # set in Phase 12. The criterion that actually matters for `core/` is the one in its own

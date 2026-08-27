@@ -31,6 +31,7 @@ import numpy as np
 
 from bot.config.schema import AppConfig
 from bot.core.bars import BarSeries, from_epoch_s
+from bot.core.ids import object_id
 from bot.core.indicators import atr_ref
 from bot.core.sessions import SessionInstance, SessionStatus
 from bot.core.structure import ProtectedChange, StructureResult
@@ -142,6 +143,35 @@ def tier_for(source: LevelSource, timeframe: str) -> int:
     return 3
 
 
+#: Merge precedence within one tier and one confirmation bar (SPEC 8.8, D-015 section 2).
+#: Lower wins. The principle is that a **primary** structural object beats one that
+#: annotates it or is derived from it, so a merge never dissolves the thing the derived
+#: level was describing.
+_SOURCE_PRECEDENCE: dict[LevelSource, int] = {
+    LevelSource.PREV_MONTH_HIGH: 0,
+    LevelSource.PREV_MONTH_LOW: 0,
+    LevelSource.PREV_WEEK_HIGH: 1,
+    LevelSource.PREV_WEEK_LOW: 1,
+    LevelSource.PREV_DAY_HIGH: 2,
+    LevelSource.PREV_DAY_LOW: 2,
+    LevelSource.SESSION_HIGH: 3,
+    LevelSource.SESSION_LOW: 3,
+    LevelSource.SWING_HIGH: 4,
+    LevelSource.SWING_LOW: 4,
+    # Derived from swings: a cluster of them, and a window over them.
+    LevelSource.EQUAL_HIGHS: 5,
+    LevelSource.EQUAL_LOWS: 5,
+    LevelSource.RANGE_HIGH: 6,
+    LevelSource.RANGE_LOW: 6,
+    # An annotation on a swing, never a level in its own right (D-006).
+    LevelSource.PROTECTED_SWING: 7,
+}
+
+
+def _source_precedence(source: LevelSource) -> int:
+    return _SOURCE_PRECEDENCE.get(source, 99)
+
+
 @dataclass
 class LiquidityLevel:
     """SPEC 8.2.  Mutable: status, strength and price all change over a level's life."""
@@ -204,7 +234,20 @@ def _mk(
     formed_in_data_suspect: bool = False,
 ) -> LiquidityLevel:
     return LiquidityLevel(
-        id=f"L{seq:06d}",
+        id=object_id(
+            "LV",
+            symbol=symbol,
+            timeframe=timeframe,
+            at=confirmed_at,
+            # Natural key: what makes two levels the same level.  **``seq`` is
+            # deliberately absent.** It counts candidates built so far, which
+            # depends on how much history the run was given -- so putting it in the
+            # key made a level's id change under truncation and broke the SPEC 25.2
+            # prefix-stability test, since admission order tie-breaks on the id.
+            # Two levels sharing all four of these are the same level, and SPEC 8.8
+            # would merge them anyway.
+            key=(source.value, side.value, price, formed_at),
+        ),
         symbol=symbol,
         side=side,
         source=source,
@@ -681,11 +724,34 @@ class LiquidityEngine:
     def _pick_survivor(
         a: LiquidityLevel, b: LiquidityLevel, side: Side
     ) -> tuple[LiquidityLevel, LiquidityLevel]:
-        """Lower tier wins; ties break on the earlier level, so merging is stable and
-        does not depend on the order levels happen to sit in the list."""
+        """Lower tier wins, then the earlier level, then source precedence, then the id.
+
+        **The third key exists because the first two do not settle the commonest merge in
+        the book, and until Phase 14 nothing settled it on purpose.** A ``PROTECTED_SWING``
+        duplicates a ``SWING_*`` at the identical price ~95% of the time (D-006), and the
+        two share a tier and a confirmation bar -- so the tier and time keys both tie, and
+        the winner fell out of whatever order the levels happened to sit in, which came
+        from the id, which came from the order ``build_candidates`` happens to construct
+        sources in. Changing the id format in Phase 14 flipped it and pushed
+        ``PROTECTED_SWING``'s share of anchored sweeps from under 2% to 3.3%.
+
+        D-006's finding was right and its mechanism was accidental. The rule it relied on
+        is now stated: **a primary structural object beats one that annotates or is derived
+        from it.** ``PROTECTED_SWING`` is a strength annotation on a swing (D-006, and
+        STATE.md section 6 item 6), so the swing is the level and the annotation merges
+        into it. See D-015 section 2.
+
+        The id is the final key so the order is total and no pair can depend on list
+        position -- which is what the docstring above always claimed and did not deliver.
+        """
         if a.tier != b.tier:
             return (a, b) if a.tier < b.tier else (b, a)
-        return (a, b) if a.confirmed_at <= b.confirmed_at else (b, a)
+        if a.confirmed_at != b.confirmed_at:
+            return (a, b) if a.confirmed_at < b.confirmed_at else (b, a)
+        pa, pb = _source_precedence(a.source), _source_precedence(b.source)
+        if pa != pb:
+            return (a, b) if pa < pb else (b, a)
+        return (a, b) if a.id <= b.id else (b, a)
 
     def _age_and_expire(self, i: int, at: datetime) -> None:
         d1_now = self._d1_index(int(self.series.close_time[i]))

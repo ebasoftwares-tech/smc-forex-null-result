@@ -216,6 +216,11 @@ Every derived object (level, swing, sweep, FVG, OB, setup, order, trade) carries
 
 ```
 id            ULID, monotonic by creation time, globally unique
+              **Note (D-015 §1): a conforming ULID is wall-clock milliseconds plus
+              randomness, and §25.1 forbids both. The ids are ULID-shaped with the
+              timestamp taken from the BAR and the entropy from a hash of the
+              object's natural key -- deterministic, and stable across runs over
+              different date ranges, which a sequence number is not.**
 symbol
 timeframe
 formed_at     bar open time of the bar it describes        (UTC)
@@ -1068,6 +1073,8 @@ LiquidityLevel {
 > London or New York extreme on 90% of days — it is a sub-window of two sessions already
 > counted, not an independent pool. Only sessions whose configured role includes `liquidity`
 > contribute.
+
+**Merge tie-breaks need a third key (D-015 §2).** Tier and confirmation time both tie for the commonest merge in the book -- a `PROTECTED_SWING` duplicating a `SWING_*` at the identical price, ~95% of the time -- so until Phase 14 the survivor fell out of the id format by accident. The rule now stated: **a primary structural object beats one that annotates it or is derived from it**, with the id as a final total order.
 
 **Not liquidity, deliberately:** round numbers, Fibonacci levels, pivot points, moving
 averages, option strikes. Each would be defensible; each also multiplies the level population
@@ -2064,7 +2071,9 @@ model: fill rate, expectancy per *setup* (not per trade), and expectancy per *tr
 
 At `expires_at` with no fill: `SETUP_INVALIDATED(ENTRY_EXPIRED)`. The would-have-been trade's
 forward outcome (using the planned SL/TP over the next `exit.max_bars_in_trade` bars) is
-computed and stored as a **shadow trade**. Shadow trades never touch equity; they exist so
+computed and stored as a **shadow trade**.
+
+**A shadow trade is counterfactual on the CANCEL, never on the FILL (D-015 §3).** The order must be re-resolved with the cancels removed, and a shadow exists only if it *would* have filled. Simulating an entry at a limit price price never reached is a free discount -- a bullish limit sits below the market -- and produced 38 take-profits against 2 stops on the Phase 14 fixture while the filled population sat at zero. Shadow trades never touch equity; they exist so
 "did we miss the good ones?" is answerable per model.
 
 ### 15.7 Fallback
@@ -2076,7 +2085,9 @@ chain silently mixes populations and makes per-model statistics uninterpretable.
 ### 15.8 Backtest
 
 All five models run as **separate pre-registered variants** over identical setups, from one
-shared setup stream so the comparison is paired. Paired comparison massively increases the
+shared setup stream so the comparison is paired.
+
+**The stream is shared; the arming is not (D-015 §6).** Model A enters at the break price with its stop at the sweep extreme, so its stop distance *is* the displacement leg, and §16.3's 2.5-ATR cap rejects it wherever that leg is large -- **66 of 165 setups armed against model C's 149, and the ones it loses have the HIGHER median displacement (2.57 ATR against 2.10)**. The cap removes model A's strongest setups specifically. §4.4's `E_setup` does not repair this, since it divides by each model's own qualified count; a shared denominator over every MSS setup is what compares the five over one population. Paired comparison massively increases the
 power of the model bake-off relative to independent runs, and it makes "model C beats model A"
 a statement about the same 400 setups rather than two different populations.
 
@@ -2219,7 +2230,9 @@ systems and the backtest no longer describes what is running.
 ### 17.5 Intrabar ambiguity — the single largest backtest bias
 
 When a bar's range contains both the stop and the target, the outcome depends on the path,
-which OHLC does not record. `backtest.intrabar_mode`:
+which OHLC does not record. **This is the genuine version of the problem D-013 §1 found a false version of**: a limit entry and its stop are ordered by continuity because price approaches from one side, but an open trade sits *between* its stop and its target and continuity rules out neither.
+
+**The entry bar is part of the trade, and it is not symmetric (D-015 §5).** A market order fills at the bar's open, so the whole bar is checkable. A limit fills inside it: the bar's low, being below the limit, necessarily came at or after the fill, so **a stop hit on the entry bar is proved by continuity** -- but the bar's high may have printed before the fill, so a target hit there is **not** credited without M1. Omitting the entry bar entirely, as a first implementation did, delayed 6% of trades' exits and was worth up to 0.04R per trade, against a go/no-go threshold of +0.10R. `backtest.intrabar_mode`:
 
 | Value | Behaviour |
 |---|---|
@@ -2505,8 +2518,11 @@ causally from data available at entry — required by the brief's volatility-reg
 ### 21.3 Rejection record — the counterfactual dataset
 
 Same context columns, plus `rejection_reasons[]` (all of them, §14.1), the planned
-entry/SL/TP, and `forward_return_r` computed by simulating the planned trade over the next
-`analysis.forward_bars` bars.
+entry/SL/TP, and the forward return over the next `analysis.forward_bars` bars.
+
+**Measured in ATR from the MSS close, not in R from the planned entry (D-015 §7).** Both of the literal readings distort it: a bullish limit sits below the market, so measuring from it starts at a price the trade never paid (**+1.7R at a 92% win rate on a random walk**), and several gates reject a setup *because its risk was wrong* -- `SL_TOO_TIGHT` rejects a 0.37-pip stop and dividing by it reported **+7.0R**. The MSS close is shared by every gate and ATR is defined for every setup.
+
+**`ENTRY_EXPIRED`'s row is a tautology and will be misread (D-015 §8).** An order expires unfilled precisely when price never retraced, which for a bullish setup means it went up and kept going; the population selects for the move being measured. It is the mechanical cost of using a limit, and the comparison is against a market entry on the same setups, never against zero.
 
 This makes the most valuable analysis in the project a query rather than an experiment: *for
 each gate, what is the expectancy of the trades it rejected?* A gate whose rejected population

@@ -237,12 +237,12 @@ Classification key: **F** = FROZEN, **A** = ABLATION, **T** = TUNABLE.
 | `tp.min_target_rank` | 2.0 | F (T2 only) |
 | `tp.target_buffer_atr` | 0.15 | F |
 | `tp.ladder` | 50%@1R, 25%@2R, 25%@liq | F (T3 only). `tp.ladder_first_r` = 1.0 is the `tp_1` §17.2 measures — **so T3 is rejected on every setup at the default `min_rr`** (D-014 §1) |
-| `manage.be_trigger_r` | 0.0 (off) | **A** {off, 1.0, 1.5} |
+| `manage.be_trigger_r` | 0.0 (off) | **A** {off, 1.0, 1.5} — off by default because it trades expectancy for win rate |
 | `manage.be_offset_atr` | 0.05 | F |
 | `manage.trail_mode` | none | **A** (none / structure / atr) |
 | `manage.trail_atr_mult` | 2.0 | F |
 | `manage.trail_start_r` | 1.0 | F |
-| `exit.max_bars_in_trade` | 30 | **A** {15, 30, 60, off} |
+| `exit.max_bars_in_trade` | 30 | **A** {15, 30, 60, off}. Running out of data is `END_OF_DATA`, never `TIME_STOP` — one is a decision, the other is not |
 | `exit.close_before_weekend` | true | **A** |
 | `exit.weekend_close_utc` | Fri 19:00 | F |
 | `exit.close_before_high_impact_news` | false | F — prohibited until reproducible in backtest (§17.4) |
@@ -288,6 +288,12 @@ no broker has been chosen (Q1).
 | `ops.max_broker_errors` | 5/hour | F |
 | `ops.kill_switch_file` | `KILL_SWITCH` | F |
 
+### 3.15b Counterfactual analysis (§19, §21.3)
+
+| Parameter | Default | Class |
+|---|---|---|
+| `analysis.forward_bars` | 12 | F — the horizon a rejected setup's forward move is measured over. **In ATR from the MSS close**, not in R from the planned entry (D-015 §7) |
+
 ### 3.16 Execution and costs (§26)
 
 | Parameter | Default | Class |
@@ -296,9 +302,9 @@ no broker has been chosen (Q1).
 | `slip.entry_pips` / `entry_atr_mult` | 0.2 / 0.02 | F |
 | `slip.stop_pips` / `stop_atr_mult` | 0.5 / 0.05 | F |
 | `cost.commission_per_lot_per_side` | 3.5 | F (account-specific) |
-| `cost.spread_model` | measured | F (fallback: session constants) |
-| `cost.multiplier` | 1.0 | **A** {1.0, 1.5, 2.0} — the mandatory cost-sensitivity run |
-| `backtest.intrabar_mode` | m1_path | F (`pessimistic` when M1 absent; `ohlc_heuristic` prohibited) |
+| `cost.spread_model` | session_constant | F — `measured` needs a tick series (Q2); the 3.3 sweep bounds the error the fallback introduces |
+| `cost.multiplier` | 1.0 | **A** {1.0, 1.5, 2.0} — the mandatory cost-sensitivity run. Scales spread, commission and both slippage terms |
+| `backtest.intrabar_mode` | m1_path | F (`pessimistic` when M1 absent; `ohlc_heuristic` prohibited). Decides stop-vs-target on an open trade — the genuine ambiguity, unlike the entry case D-013 §1 settled by continuity |
 | `backtest.limit_fill_buffer_pips` | 0.2 | F |
 | `ops.max_data_staleness_sec` | 300 | F |
 | `ops.max_broker_errors` | 5/hour | F |

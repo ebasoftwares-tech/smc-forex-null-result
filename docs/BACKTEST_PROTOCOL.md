@@ -166,6 +166,14 @@ E_setup             (fill_rate × E_trade)          ← the comparable quantity
 `E_setup` is the number that answers "which model would I rather run?", because it charges a
 model for the opportunities it declines to take.
 
+**It is not sufficient on its own, because `qualified setups` differs by model (D-015 §6).** SPEC 16.3's stop cap rejects model A on 60% of setups -- and on the *strongest-displacement* ones specifically, since for a market entry a strong displacement is a wide stop. Dividing by each model's own qualified count scores model A on its easy 40%. A fourth column,
+
+```
+E_all_setups        (total R) / (every MSS setup in the stream)
+```
+
+uses the one denominator every model shares, and is the only figure comparing them over a single population.
+
 ---
 
 ## §5. Statistical protocol
@@ -353,6 +361,8 @@ regardless of level.
 
 The skip-10% test deserves emphasis: a strategy whose entire profit comes from three trades
 will fail it, and no other test in this suite reliably catches that.
+
+**Its stated acceptance does not always reach that target, and needs a companion (D-015 §4).** "5th-percentile net return > 0" is a **sign** test while concentration is a **drop**: on a sequence of 57 losers and 3 large winners, dropping 10% of 60 trades rarely removes all three and the sign survives. Report alongside it the **share of total R held by the best k trades** (above 1.0 means the rest of the book loses money) and the **degradation** of the skip test's own 5th percentile against the unskipped return. Both are undefined on a losing book and must return no verdict there rather than a negative share that trivially passes.
 
 ---
 

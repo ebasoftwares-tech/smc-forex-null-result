@@ -49,6 +49,7 @@ import numpy as np
 
 from bot.config.schema import AppConfig
 from bot.core.bars import BarSeries, from_epoch_s
+from bot.core.ids import object_id
 from bot.core.displacement import Direction
 from bot.core.indicators import atr_ref
 from bot.core.swings import Swing, SwingKind
@@ -383,7 +384,13 @@ def propose(
     return ObProposal(
         d,
         OrderBlock(
-            id=f"{series.symbol}:{series.timeframe}:OB:{d.value[:4]}:{seq:05d}",
+            id=object_id(
+                f"OB{d.value[:4]}",
+                symbol=series.symbol,
+                timeframe=series.timeframe,
+                at=from_epoch_s(series.close_time[break_bar]),
+                key=(d.value, int(series.open_time[origin]), zl, zh),
+            ),
             symbol=series.symbol,
             timeframe=series.timeframe,
             definition=d,

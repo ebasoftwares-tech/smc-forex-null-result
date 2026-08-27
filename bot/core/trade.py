@@ -46,6 +46,12 @@ from bot.core.stops import StopCheck, StopReject, check_stop, symbol_spec
 from bot.core.targets import TargetPlan, TargetReject, first_target
 
 
+#: A placeholder for the geometry pass, which does not size.  Zero lots and zero risk
+#: make it obvious in any record that escapes: a trade that reaches a report with these
+#: numbers was never sized, rather than sized to nothing.
+_UNSIZED_LOTS = 0.0
+
+
 class Stage(str, Enum):
     """Which layer rejected, so a table can be read by layer as well as by reason."""
 
@@ -99,6 +105,9 @@ class Decision:
         return self.plan is not None
 
 
+_UNSIZED = SizingResult(_UNSIZED_LOTS, 0.0, 0.0, 0.0, 0.0, None)
+
+
 #: Every reason this chain can produce, as SPEC 19 names them.  A test asserts that the
 #: set matches the enums, so a new rejection cannot be introduced without appearing here.
 REASONS: frozenset[str] = frozenset(
@@ -123,8 +132,14 @@ def evaluate(
     quote_to_account: float | None = None,
     at: datetime | None = None,
     apply_limits: bool = True,
+    skip_sizing: bool = False,
 ) -> Decision:
     """Run SPEC 16.3 -> 17.2 -> 18.2 -> 18.4 over one armed order.
+
+    ``skip_sizing`` exists for the backtest engine's geometry pass. SPEC 18.2's rejections
+    are functions of **equity**, so a pass that is meant to be portfolio-free must not run
+    them -- otherwise the set of setups it produces depends on an account size, which is
+    exactly what that pass exists not to depend on.
 
     ``apply_limits`` exists for SPEC 18.9's requirement that results be reported *both*
     with limits on and off: *"a strategy that is only profitable with a daily loss limit
@@ -173,6 +188,11 @@ def evaluate(
     risk_pct = (
         ledger.effective_risk_pct() if ledger is not None else cfg.risk.pct_per_trade
     )
+    if skip_sizing:
+        return Decision(
+            Stage.ACCEPTED, None,
+            TradePlan(plan, tgt, _UNSIZED, sc, risk_pct, equity), at,
+        )
     try:
         sizing = size_for_setup(
             cfg,

@@ -34,6 +34,7 @@ import numpy as np
 
 from bot.config.schema import AppConfig
 from bot.core.bars import BarSeries, from_epoch_s
+from bot.core.ids import object_id
 from bot.core.indicators import atr_ref
 from bot.core.liquidity import (
     LevelSource,
@@ -246,9 +247,21 @@ class SweepEngine:
         b = int(np.searchsorted(closes, now, side="right"))
         return (b - a) >= need
 
-    def _mk_id(self) -> str:
+    def _mk_id(self, level_id: str, i: int, w: _Window) -> str:
+        """SPEC 9.1: "identity is (level, trigger, confirm, extreme)". Literally that."""
         self._seq += 1
-        return f"SW{self._seq:06d}"
+        return object_id(
+            "SW",
+            symbol=self.series.symbol,
+            timeframe=self.series.timeframe,
+            at=from_epoch_s(self.series.close_time[i]),
+            key=(
+                level_id,
+                int(self.series.open_time[w.trigger_bar]),
+                int(self.series.close_time[i]),
+                w.extreme,
+            ),
+        )
 
     def _emit(
         self,
@@ -264,7 +277,7 @@ class SweepEngine:
             lvl.price - w.extreme if lvl.side is Side.SELL_SIDE else w.extreme - lvl.price
         )
         ev = SweepEvent(
-            id=self._mk_id(),
+            id=self._mk_id(lvl.id, i, w),
             symbol=self.series.symbol,
             timeframe=self.series.timeframe,
             type=type_,
@@ -463,7 +476,13 @@ class SweepEngine:
             bar, side = key
             self.result.clusters.append(
                 SweepCluster(
-                    id=f"SC{k:06d}",
+                    id=object_id(
+                        "SC",
+                        symbol=self.series.symbol,
+                        timeframe=self.series.timeframe,
+                        at=evs[0].at,
+                        key=(side.value, tuple(sorted(e.id for e in evs))),
+                    ),
                     at=evs[0].at,
                     confirm_bar=bar,
                     side=side,

@@ -1,6 +1,6 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-27, after Phase 13.
+Last updated: 2026-08-27, after Phase 14.
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -27,9 +27,9 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 
 | | |
 |---|---|
-| **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11, 12, 13 |
-| **Tests** | 508, all passing |
-| **Commits** | 11, on `master` |
+| **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 |
+| **Tests** | 578, all passing |
+| **Commits** | 12, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
@@ -37,6 +37,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 .venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
 .venv/Scripts/python.exe scripts/phase12_report.py  # the Phase 12 entry engine
 .venv/Scripts/python.exe scripts/phase13_report.py  # the Phase 13 risk layer
+.venv/Scripts/python.exe scripts/phase14_report.py  # the Phase 14 backtest engine
 .venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
 ```
 
@@ -55,6 +56,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 — **four variants are worth 1.77 tests**, see D-012 |
 | 12 | Entry engine — five models, fill resolution against M1 | `reports/phase12_gate.md` | 8/8 — a "conservative" fill default that was neither, see D-013 |
 | 13 | Risk — stops S1–S4, the RR gate, sizing, limits | `reports/phase13_gate.md` | 8/8 — **four defaults that cannot fire**, see D-014 |
+| 14 | Backtest engine — exits, costs, metrics, Monte Carlo | `reports/phase14_gate.md` | 10/10 — **four free lunches found and closed**, see D-015 |
 
 **Phase 5 was built before 2–4 deliberately**: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
@@ -62,7 +64,13 @@ mostly configuration.
 
 ### Not started
 
-Phases 2–4 (Monthly/Weekly/Daily bias), 14–17 (backtest, charts, paper, live).
+Phases 2–4 (Monthly/Weekly/Daily bias), 15–17 (charts, paper, live).
+
+**Phase 14 built the engine, not the falsification suite.** `BACKTEST_PROTOCOL.md` §6's
+controls — shuffled liquidity (H3), sweep-only, CHoCH-only, reversed-order, random-time
+(H4) — are the protocol's *"most informative runs in the project"* and are deliberately
+unbuilt. They are studies rather than engine, and every one asks a question that is
+meaningless on a fixture whose true effect is zero by construction. See §9.
 
 ---
 
@@ -165,6 +173,43 @@ Three numbers worth carrying forward:
   the number against a stop-scale factor rather than alone. The *shape* transfers; the row
   that applies depends on the real ATR distribution.
 
+## 3c. Phase 14, and the four free lunches
+
+The gate — *"full protocol; replay + shifted-data tests green; cost sensitivity run"* — is
+met. What matters is what building it turned up: **four separate places where the engine
+credited a price the trade could never have obtained.** They share a shape — a price that
+was *planned* treated as a price that was *paid* — and it is evidently this layer's
+characteristic bug.
+
+| | What | Effect before the fix |
+|---|---|---|
+| 1 | **Shadow trades entered at limit prices price never reached.** A bullish limit sits below the market, so every shadow got a free discount | 38 take-profits against 2 stops, mean **+1.57R**, on a random walk |
+| 2 | **The rejection log's forward return was measured from the planned entry, in R against the planned risk.** Both distort: the entry was never paid, and several gates reject a setup *because its risk was wrong* | median **+1.7R at 92%**; `SL_TOO_TIGHT` read **+7.0R** off a 0.37-pip denominator |
+| 3 | **The exit walk skipped the entry bar**, so a trade that filled and stopped out inside one bar was carried to the next bar's open | **6% of trades** close on their entry bar; worth up to **0.04R per trade**, against a +0.10R go/no-go threshold |
+| 4 | **Fill rate counted portfolio-admitted trades**, folding SPEC 18.4's position cap into the model bake-off — and the cap bites hardest on whichever model fills most | model A read **58%** against the 100% Phase 12 measured |
+
+Three further findings that are not bugs:
+
+- **The entry models do not arm on the same setups, and the difference has a direction.**
+  Model A's stop distance *is* the displacement leg, so SPEC 16.3's 2.5-ATR cap rejects it
+  on 99 of 165 setups — and the rejected ones have the **higher** median displacement (2.57
+  ATR against 2.10). The cap removes its strongest setups specifically. `E_setup` does not
+  repair this because it divides by each model's own count; `E_all_setups` (shared
+  denominator) does. This is D-014 §6 recurring on the entry axis (D-015 §6).
+- **`ENTRY_EXPIRED`'s rejection row is a tautology.** An order expires unfilled precisely
+  when price never retraced — which for a bullish setup means it ran. The population selects
+  for the move being measured. It reads +1.37 ATR and **must never be read as "the expiry
+  rule destroys edge"** (D-015 §8).
+- **Protocol §9's most-emphasised test does not always reach its own target.** Skip-10%'s
+  acceptance is a *sign* test while concentration is a *drop*: 57 losers plus 3 large
+  winners passes it. Two companions close the gap (D-015 §4).
+
+And one recurrence worth its own line: **a redundant guard is an untested guard.** D-014 §8
+recorded a clamp hidden by a validator; `manage_stop` had the identical problem one phase
+later, with each branch clamping internally *and* a final clamp that no input could reach.
+Fixed by restructuring so the branches propose and one clamp decides. 17 mutations were run;
+6 survived the first pass, all 17 are caught now.
+
 ## 4. Module map
 
 ```
@@ -174,14 +219,16 @@ bot/data/       calendar.py, resample.py, quality.py, ingest.py, synthetic.py
 bot/core/       bars.py, indicators.py, sessions.py, swings.py, structure.py,
                 liquidity.py, sweeps.py, displacement.py, fvg.py, mss.py,
                 order_blocks.py, entries.py, stops.py, targets.py, risk.py,
-                trade.py
+                trade.py, ids.py, exits.py, costs.py
+bot/backtest/   engine.py (two passes), metrics.py (protocol 4), montecarlo.py
+                (protocol 9)
 bot/research/   stats.py (shared primitives), sweep_study.py (H2),
                 displacement_study.py (SPEC 10.6), funnel.py (SPEC 11.7),
                 marginal_value.py (H5), fvg_study.py (SPEC 12.6),
                 ob_study.py (SPEC 13.8), risk_study.py (SPEC 18.9)
-scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11,12,13}_report.py,
+scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11,12,13,14}_report.py,
                 marginal_value_report.py, regen_golden.py
-tests/          508 tests + tests/golden/structure_h4.json
+tests/          578 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -204,7 +251,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-014 record corrections and findings from each phase's implementation.
+D-004 through D-015 record corrections and findings from each phase's implementation.
 
 ---
 
@@ -254,6 +301,14 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 38 | **Lots are floored with a `+1e-9` guard, not rounded.** Rounding puts mass above nominal risk on half of all trades. The epsilon is not cosmetic: `0.03 / 0.01` is 2.9999999999999996, and without it every exact multiple quantises one step low. |
 | 39 | **A missing FX conversion rate raises; it never defaults to 1.0.** SPEC 18.2's "its absence blocks the inclusion of any symbol". Every Phase 13 number is EURUSD on a USD account, where the rate is 1 by identity, so the rule is tested and never exercised in anger. |
 | 40 | **The limits-on/limits-off comparison does not mean anything yet.** With no exit policy the ledger fills to `max_open_positions` on the third setup and rejects the rest. It measures the absence of exits (D-014 §10). |
+| 41 | **Ids are deterministic ULIDs keyed on content, not sequences.** SPEC 1.7 asks for a ULID and SPEC 25.1 forbids what one is made of. Putting a run-relative sequence back in a key breaks prefix-stability, because admission order tie-breaks on the id (D-015 §1). |
+| 42 | **The old id scheme was 76% duplicates across five fixture years, not the 206 this file used to say.** 23,314 of 30,637. Now 0. |
+| 43 | **`_SOURCE_PRECEDENCE` is load-bearing.** Tier and time both tie for the commonest merge in the book, so without it the survivor comes from the id format by accident — which is how D-006's finding was true for four phases (D-015 §2). |
+| 44 | **A shadow trade is counterfactual on the CANCEL, never the FILL.** Re-resolve without the cancels; no fill means no shadow (D-015 §3). |
+| 45 | **The entry bar is part of the exit walk, and the two fill shapes differ on it.** A market fill sees the whole bar; a limit's stop is proved by continuity but its target is not (D-015 §5). |
+| 46 | **Pass one must not size.** SPEC 18.2's rejections are equity-dependent, so running them in the portfolio-free pass makes its population depend on an account size (D-015 §9). |
+| 47 | **The rejection log's forward return is in ATR from the MSS close.** Not R from the planned entry — that reads +1.7R at 92% on a random walk (D-015 §7). |
+| 48 | **Entries are processed before exits within one bar**, so a slot is never freed by a close whose time inside the bar is unknown. |
 
 ---
 
@@ -291,6 +346,14 @@ All five are the same mistake at different scales, and all five are now pinned b
   mechanisms enforce one rule, the outer one hides the inner one from every test that goes
   through the front door.* Fixed by a test that bypasses the validator with `model_copy`;
   15 of 15 mutations are now caught.
+
+- **Phase 14:** the same thing again, in `manage_stop`, one phase after D-014 §8 named
+  it. Each management branch clamped internally *and* the function clamped at the end, so
+  the final clamp was unreachable and a mutation deleting it changed nothing. Fixed by
+  restructuring rather than by adding a test — the branches now propose and one clamp
+  decides — because a guard that needs a special test to reach it is a guard in the wrong
+  place. **Twice in two phases is a pattern, not an accident: check for it whenever a rule
+  is enforced in more than one spot.**
 
 **A statistic not compared against what noise alone would produce is not a finding.**
 
@@ -336,6 +399,19 @@ no participants and no structure, so:
   the fixture's median H4 ATR is 17.4 pips, which is what keeps S4 under its 40-pip
   ceiling and the pip cap out of play.
 
+- **Phase 14 produced a complete equity curve and it means nothing.** Expectancy,
+  profit factor, Sharpe, drawdown — all of it is the detectors meeting noise, and every
+  confidence interval spans zero, which is the correct answer. The engine is validated;
+  the market is not real. What the phase establishes is that the chain runs end to end,
+  that R is computed in a pass which structurally cannot see equity, and that the two
+  tests SPEC 25.2/25.3 name are green.
+- **The fixture now fails to show a *third* execution effect.** It is perfectly continuous,
+  so SPEC 15.3's lookahead (Phase 12), the S4 stop's movement at fill (Phase 13) and now
+  **SPEC 17.5's intrabar stop-versus-target ambiguity — the protocol's "single largest
+  backtest bias" — all measure exactly 0.0000 here**, the last of them because a bar
+  spanning both a 1R stop and a 2R target needs a range of ~4.4 ATR. All three are pinned
+  by constructed tests and all three are first in line on real bars.
+
 `bot/data/synthetic.py` says so in its own docstring and is never used to produce a
 strategy result.
 
@@ -349,31 +425,28 @@ and one of its findings is that part of it may not be answerable on real data ei
 (§3a). So the design stands and the next phases are the ones that turn an event into a
 trade.
 
-### Phase 14, the backtest engine
+### The falsification suite is the next real deliverable
 
-Everything before it now exists: a setup stream, five entry models, four stop models, a
-target and an RR gate, sizing, and the limits. **Phase 14 is where the first number that
-means anything about markets could be produced — and cannot be, until Q1/Q2 land.**
+`BACKTEST_PROTOCOL.md` §6 is the largest thing still unbuilt, and the protocol calls it
+*"the most informative runs in the project"*. Phase 14 deliberately left it: every control
+in it asks whether a component contributes, and on a fixture whose true effect is zero by
+construction the answer is "no" for all of them, including the real ones.
 
-What it has to carry, in rough order of how much it decides:
+| Control | Tests | What a null verdict would mean |
+|---|---|---|
+| Shuffled liquidity (§6.3) | H3 | Liquidity identification contributes nothing — rebuild as mean-reversion and drop the SMC framing |
+| Sweep-only (§6.4) | H4 | The CHoCH requirement only reduces sample size |
+| CHoCH-only (§6.4) | H4 | The sweep requirement only reduces sample size |
+| Reversed order (§6.4) | H4 | The *sequence* is not what works |
+| Random-time (§6.4) | — | The floor: what this SL/TP geometry pays with no signal at all |
 
-- **The exit policy**, which is the half of SPEC 17 Phase 13 deliberately left: 17.3's
-  break-even and trailing, 17.4's time and calendar exits, and the *execution* of T3's
-  ladder and T4's trail. Without it nothing closes, which is why every SPEC 18.4 loss limit
-  is scenario-evidence rather than measurement, and why the limits-on/off comparison SPEC
-  18.9 asks for is currently meaningless (D-014 §10).
-- **Per-SETUP expectancy, never per-trade** (SPEC 15.5/15.8). Entry coverage runs
-  100/39/33/33/41% (D-013 §5) and the target models do not even share a setup stream
-  (D-014 §6). A per-trade comparison would rank the models by their fill rates.
-- **Shadow trades** (SPEC 15.6) — the would-have-been outcome of an expired or cancelled
-  order. Needs `exit.max_bars_in_trade` plus the stop/target policy, and answers "did we
-  miss the good ones?" per model.
-- **The rejection log as a counterfactual dataset** (SPEC 19's closing rule, §21.3). Every
-  invalidation stores the forward return in the setup's direction, which turns "were our
-  filters right?" into a query rather than another backtest run. `trade.Decision` carries
-  the hook; the return is the caller's to fill in.
-- **`M_eff` in the corrections**: 1.77 for the order-block definitions (D-012) and 1.36 for
-  the stop models (D-014 §7), both recomputed on real bars first.
+The engine is built to run them: `run(cfg, market, ...)` takes a `Market` and every control
+is a `Market` built differently, so none of them needs a second engine. §10.1's go/no-go has
+this as the row *"most likely to fail"* and says why: *"a strategy that beats a null model
+but not a sweep-only control has not demonstrated the thing it claims to demonstrate."*
+
+Everything else in the protocol that remains — walk-forward (§8), the OOS budget ledger
+(§7), the pre-registration (§1) — is a procedure over real splits and cannot start earlier.
 
 ### Still blocking real results
 
@@ -410,17 +483,32 @@ studies are built, and none of their numbers mean anything about markets yet.
    three questions the fixture's 17.4-pip ATR cannot: whether real ATR clears S4's 40-pip
    ceiling, which of the two upper stop caps actually binds, and what the minimum viable
    account really is at the real stop-distance scale.
-6. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
+6. **`scripts/phase14_report.py`** — the whole chain on real bars, and specifically the
+   three effects this fixture measures as exactly zero: SPEC 15.3's lookahead, the S4
+   stop's movement at fill, and SPEC 17.5's intrabar ambiguity. Also the rejection table,
+   which is the only place a filter can be shown to be destroying edge.
+7. **The §6 falsification suite**, which is the one that decides whether the project has
+   demonstrated what it claims. Everything before it can pass while this fails.
+8. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
    TUNABLE/ABLATION split.
 
-### Before Phase 14
+### Before the first real backtest
 
-Namespace ids (§6 item 10) — required before trades from different runs are pooled.
+1. **Write the pre-registration** (`BACKTEST_PROTOCOL.md` §1) and commit its hash. It is
+   due before the first *strategy* backtest — a synthetic run validates an instrument, so
+   nothing so far has triggered it. Six of its seven items are already determined by
+   existing documents; only the date ranges wait on the data. **A pre-registration written
+   after seeing a result is not one.**
+2. **Take the four D-014 decisions**, or the ablation grid has holes: T3 arms on no setup
+   at the default `min_rr`, T4 runs on a different population from T1–T2, and two SPEC 18
+   safety checks are inert.
+3. **Build `events.jsonl`** (SPEC 21.1). The engine currently holds trades and rejections
+   in memory and the report reads them there, which inverts the specification's
+   relationship — the log is the primary artefact and the tables are derived from it. Fine
+   while one process does both; a blocker for Phase 16, which reconciles a live log against
+   a backtest.
 
-**And take the four D-014 decisions**, or Phase 14 runs an ablation grid with holes in it:
-T3 arms on no setup at the default `min_rr`, T4 runs on a different population from
-T1–T2, and two SPEC 18 safety checks are inert. None of these blocks the backtest; all of
-them make part of its output uninterpretable if left unresolved.
+Ids are namespaced (former §6 item 10, now done — D-015 §1).
 
 ### When Phases 2–4 land
 
@@ -433,7 +521,7 @@ passed with 152 against a floor of 120, so a gate rejecting more than a fifth of
 puts the development set back under it — and would push H5 further out of reach at the
 same time.
 
-### After Phase 12, revisit H5
+### Revisit H5
 
 R-expectancy is the half of `BACKTEST_PROTOCOL.md` §6.2 that could not be run: stops
 (SPEC 16) and targets (SPEC 17) do not exist yet, so there is no R to measure. Worth

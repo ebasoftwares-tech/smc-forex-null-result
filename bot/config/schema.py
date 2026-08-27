@@ -1017,6 +1017,160 @@ class OpsConfig(Frozen):
     )
 
 
+class ManageConfig(Frozen):
+    """SPEC 17.3 -- break-even and trailing, both ABLATION dimensions.
+
+    **Break-even is off by default and the specification says why:** it *"reliably raises
+    win rate and reliably lowers expectancy on most systems; enabling it by default would
+    flatter the headline statistic that matters least."* The default is the honest one, not
+    the flattering one.
+    """
+
+    be_trigger_r: float = Field(
+        0.0,
+        ge=0.0,
+        description=(
+            "ABLATION {off, 1.0, 1.5}. SPEC 17.3. 0 disables it. Off by default because it "
+            "trades expectancy for win rate, and win rate is the statistic that matters "
+            "least."
+        ),
+    )
+    be_offset_atr: float = Field(
+        0.05,
+        ge=0.0,
+        description=(
+            "FROZEN. SPEC 17.3 -- the offset covers spread and commission, so break-even "
+            "is actually break-even rather than a small loss."
+        ),
+    )
+    trail_mode: Literal["none", "structure", "atr"] = Field(
+        "none", description="ABLATION. SPEC 17.3."
+    )
+    trail_atr_mult: float = Field(2.0, gt=0, description="FROZEN. SPEC 17.3, atr mode only.")
+    trail_start_r: float = Field(
+        1.0, ge=0.0, description="FROZEN. SPEC 17.3 -- trailing does not begin before this."
+    )
+
+
+class ExitConfig(Frozen):
+    """SPEC 17.4 -- time and calendar exits.
+
+    The last field carries a rule about the whole system, not just about news: **any live
+    behaviour the backtest cannot reproduce is prohibited.** Otherwise the live system and
+    the tested system are different systems and the backtest stops describing what runs.
+    """
+
+    max_bars_in_trade: int = Field(
+        30,
+        ge=1,
+        description="ABLATION {15, 30, 60, off}. SPEC 17.4 -- 30 H4 bars is about 5 days.",
+    )
+    close_before_weekend: bool = Field(
+        True,
+        description=(
+            "ABLATION. SPEC 17.4 -- avoids the weekend gap and the triple swap. On by "
+            "default, unlike break-even, because it removes a risk rather than shaping a "
+            "statistic."
+        ),
+    )
+    weekend_close_utc: time = Field(
+        time(19, 0), description="FROZEN. SPEC 17.4, Friday."
+    )
+    weekend_close_day: str = Field("Fri", description="FROZEN. SPEC 17.4.")
+    close_before_high_impact_news: bool = Field(
+        False,
+        description=(
+            "FROZEN false. SPEC 17.4 -- needs a calendar feed (Q13), and a feature that "
+            "cannot be reproduced in the backtest MUST NOT exist only in live."
+        ),
+    )
+
+    _v_time = field_validator("weekend_close_utc", mode="before")(staticmethod(_parse_time))
+
+    @field_validator("weekend_close_day")
+    @classmethod
+    def _dow(cls, v: str) -> str:
+        if v not in _WEEKDAYS:
+            raise ValueError(f"unknown weekday {v!r}")
+        return v
+
+    @property
+    def weekend_close_dow(self) -> int:
+        return _WEEKDAYS[self.weekend_close_day]
+
+
+class SlipConfig(Frozen):
+    """SPEC 26 -- slippage, always adverse and asymmetric between entries and stops.
+
+    *"Stops fill worse than limits; modelling them symmetrically is a systematic
+    optimism."* The two pairs of numbers are the specification's, and the asymmetry is the
+    point of having two pairs.
+    """
+
+    entry_pips: float = Field(0.2, ge=0.0, description="FROZEN. SPEC 26.")
+    entry_atr_mult: float = Field(0.02, ge=0.0, description="FROZEN. SPEC 26.")
+    stop_pips: float = Field(0.5, ge=0.0, description="FROZEN. SPEC 26 -- larger than entry.")
+    stop_atr_mult: float = Field(0.05, ge=0.0, description="FROZEN. SPEC 26 -- larger than entry.")
+
+
+class CostConfig(Frozen):
+    """SPEC 26 / BACKTEST_PROTOCOL 3.3.
+
+    ``multiplier`` is the mandatory cost-sensitivity dimension: *"a strategy whose
+    expectancy is destroyed at 1.5x is not deployable: broker spreads vary by more than
+    that, and so do the same broker's spreads across the day and across years."*
+    """
+
+    commission_per_lot_per_side: float = Field(
+        3.5, ge=0.0, description="FROZEN. SPEC 26 -- raw-spread account assumption."
+    )
+    spread_model: Literal["measured", "session_constant"] = Field(
+        "session_constant",
+        description=(
+            "FROZEN. SPEC 26 prefers `measured`; there is no tick spread series until Q2, "
+            "so the session-constant fallback is what actually runs and the 3.3 "
+            "sensitivity run is what bounds the error."
+        ),
+    )
+    spread_pips_active: dict[str, float] = Field(
+        default_factory=lambda: {"default": 0.8, "JPY": 1.2},
+        description="FROZEN. SPEC 26 -- London and New York.",
+    )
+    spread_pips_quiet: dict[str, float] = Field(
+        default_factory=lambda: {"default": 1.6, "JPY": 2.4},
+        description="FROZEN. SPEC 26 -- Asia and outside sessions, double the active figure.",
+    )
+    multiplier: float = Field(
+        1.0,
+        gt=0,
+        description=(
+            "ABLATION {1.0, 1.5, 2.0}. BACKTEST_PROTOCOL 3.3 -- the mandatory "
+            "cost-sensitivity run. Every headline result is reported at all three."
+        ),
+    )
+    swap_pips_per_day: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "FROZEN, empty. SPEC 26 takes swap from the broker table (Q1). Empty means "
+            "zero swap and the reports say so rather than inventing a financing cost."
+        ),
+    )
+
+
+class AnalysisConfig(Frozen):
+    """SPEC 19 / 21.3 -- the counterfactual horizon."""
+
+    forward_bars: int = Field(
+        12,
+        ge=1,
+        description=(
+            "FROZEN. SPEC 19: every invalidation stores the forward return over this many "
+            "bars, which is what turns the rejection log into a counterfactual dataset "
+            "answerable without a second backtest run."
+        ),
+    )
+
+
 class AppConfig(Frozen):
     """The fully resolved configuration.  Hashed to produce ``config_hash``."""
 
@@ -1041,6 +1195,11 @@ class AppConfig(Frozen):
     risk: RiskConfig = RiskConfig()
     account: AccountConfig = AccountConfig()
     ops: OpsConfig = OpsConfig()
+    manage: ManageConfig = ManageConfig()
+    exit: ExitConfig = ExitConfig()
+    slip: SlipConfig = SlipConfig()
+    cost: CostConfig = CostConfig()
+    analysis: AnalysisConfig = AnalysisConfig()
     exec: ExecConfig = ExecConfig()
     backtest: BacktestConfig = BacktestConfig()
     fvg: FvgConfig = FvgConfig()

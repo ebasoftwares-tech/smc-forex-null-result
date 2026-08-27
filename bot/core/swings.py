@@ -25,6 +25,7 @@ import numpy as np
 
 from bot.config.schema import AppConfig
 from bot.core.bars import BarSeries, from_epoch_s
+from bot.core.ids import object_id
 
 
 class SwingKind(str, Enum):
@@ -293,7 +294,13 @@ def detect_at(
             continue
         out.append(
             Swing(
-                id=f"{series.symbol}:{series.timeframe}:{kind.value[0]}S:{c}",
+                id=object_id(
+                    f"{kind.value[0]}S",
+                    symbol=series.symbol,
+                    timeframe=series.timeframe,
+                    at=confirmed_at,
+                    key=(int(series.open_time[c]), float(arr[c])),
+                ),
                 symbol=series.symbol,
                 timeframe=series.timeframe,
                 kind=kind,

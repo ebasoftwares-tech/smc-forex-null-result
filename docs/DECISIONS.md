@@ -1584,3 +1584,286 @@ test without the stop models tests arithmetic on a number nothing produced.
   third setup of each year and rejects everything after it. The switch is verified to work
   and to leave the *strategy's* own rejections in place; the comparison it exists for needs
   an equity curve, and is Phase 14's.
+
+---
+
+## D-015 — The backtest engine, and four ways a free lunch gets into one
+
+| | |
+|---|---|
+| **Date** | 2026-08-27 |
+| **Status** | ACTIVE |
+| **Trigger** | Phase 14 implementation (the backtest engine, BACKTEST_PROTOCOL in full) |
+
+The gate is *"full protocol; replay + shifted-data tests green; cost sensitivity run"*, and
+all three pass. What is worth recording is not that they pass but what building them turned
+up: **four separate places where the engine was crediting a price the trade could never
+have obtained**, each arrived at by a different route, and none of them visible in a diff.
+
+They share a shape. In every case the code took a price that was *planned* and treated it as
+a price that was *paid*. That is the same error D-013 section 1 recorded from the other
+direction — reasoning from a label rather than from what the market could actually have
+done — and it is evidently the characteristic bug of this layer.
+
+### 1. SPEC 1.7 asks for a ULID and SPEC 25.1 forbids what a ULID is made of
+
+A ULID is 48 bits of wall-clock milliseconds plus 80 bits of randomness. SPEC 25.1 requires
+that the same data and the same `config_hash` produce byte-identical output — *"no
+wall-clock reads, no unseeded randomness"* — and 25.4 prohibits `datetime.now()` anywhere in
+the signal path. **A conforming ULID would break reproducibility on its own**: two runs over
+identical data would produce different ids and `events.jsonl` would never be byte-identical.
+
+Resolved by keeping the ULID's shape and ordering property and deriving both halves
+deterministically (`bot/core/ids.py`): the timestamp is **the bar's** millisecond, and the
+entropy is a BLAKE2b digest of the object's **natural key** rather than randomness.
+
+**The problem it fixes was under-recorded by two orders of magnitude.** STATE.md section 6
+item 10 said "206 collide across five fixture years". The real figure is **23,314 duplicates
+out of 30,637 ids — 76%** — and it affected every object kind, including the ones already
+namespaced by symbol and timeframe, because their sequence restarted with each run. Pooling
+trades from two runs would have joined unrelated objects to each other. It is now 0.
+
+Two things learned while getting there:
+
+**A sequence number cannot be in the key.** The first version put the candidate `seq` in a
+level's natural key. `seq` counts candidates built so far, which depends on how much history
+the run was given — so a level's id changed under truncation, and because admission order
+tie-breaks on the id, the book silently reordered. It broke
+`test_admission_order_is_prefix_stable`, which is SPEC 25.2 doing exactly its job. Content
+addressing is not a nicety here: it is what makes an id survive a different date range.
+
+**Content addressing buys something a sequence cannot**, which is why it stayed after the
+bug was understood: the same logical object gets the same id in every run. Two runs over
+overlapping periods now agree about which level is which, which is the actual precondition
+for pooling.
+
+### 2. A documented finding whose mechanism was accidental
+
+Changing the id format moved `PROTECTED_SWING`'s share of anchored sweeps from under 2% to
+**3.3%**, breaking a test that pinned D-006's finding.
+
+The finding was right and its cause was luck. A `PROTECTED_SWING` duplicates a `SWING_*` at
+the identical price ~95% of the time, and the two share a tier *and* a confirmation bar — so
+SPEC 8.8's stated tie-breaks (tier, then time) **both tie**, and the winner fell out of
+whatever order the levels happened to sit in. That order came from the id, which came from
+the order `build_candidates` happens to construct sources in. Nothing stated it as a rule and
+no test pinned it; reordering that function would have changed it just as silently.
+
+`_pick_survivor` now has an explicit third key, `_SOURCE_PRECEDENCE`, with the id as a fourth
+so the order is total. The rule it encodes is the one D-006 was implicitly relying on: **a
+primary structural object beats one that annotates it or is derived from it.** A protected
+swing is a strength annotation on a swing (D-006, STATE.md section 6 item 6), so the swing is
+the level.
+
+The general lesson: *a behaviour that no rule states and no test pins is not a design, it is
+a coincidence with a docstring.*
+
+### 3. Shadow trades were entering at prices price never reached
+
+SPEC 15.6: *"the would-have-been trade's forward outcome ... is computed and stored as a
+shadow trade"*, so that "did we miss the good ones?" is answerable per entry model.
+
+The first implementation simulated an entry at the planned limit price from the MSS bar,
+**whether or not price ever traded there**. A bullish limit sits *below* the market, so every
+shadow got a free discount. The signature was unmistakable once looked at: **38 take-profits
+against 2 stops, mean +1.57R**, while the filled population sat at roughly zero.
+
+A shadow trade is counterfactual on the **cancel**, never on the **fill**. The question is
+"would this have been good had the gate not stopped it", not "would it have been good had
+price gone somewhere it never went". The fix re-resolves the same order with the cancels
+removed; if it would have filled, the shadow starts from that fill, and if it would still
+never have filled there is **no shadow**, because there was no trade to miss. Shadows fell
+from 54 to 11 and their exits now split across stops, targets and time.
+
+Two smaller instances of the same confusion, found in the same pass:
+
+**Fill rate was counting admitted trades.** SPEC 15.5's coverage is an *order* property —
+filled orders over armed orders. Counting portfolio-admitted trades instead folds SPEC 18.4's
+position cap into the model comparison, and the cap bites hardest on whichever model fills
+most. Model A read **58%** that way, against the 100% Phase 12 measured.
+
+**The bake-off runs with the limits off**, for the same reason. A comparison with the
+portfolio engaged measures the cap, not the models.
+
+### 4. Protocol section 9's most-emphasised test does not always reach its own target
+
+*"The skip-10% test deserves emphasis: a strategy whose entire profit comes from three trades
+will fail it, and no other test in this suite reliably catches that."*
+
+Its stated acceptance is *"5th-percentile net return > 0"* — a **sign** test. Concentration
+shows up as a **drop**. Measured on constructed sequences:
+
+| sequence | top-3 share | p5 return | degradation | sign test |
+|---|---:|---:|---:|---|
+| diffuse edge, 300 trades | 26% | +7.9% | 37% | passes |
+| carried by 3 of 300 | 571% | −1.2% | 158% | fails |
+| carried by 1 of 40 | 190% | −1.3% | 189% | fails |
+| **carried by 3 of 60** | **161%** | **+1.7%** | 49% | **passes** |
+
+The gap is narrow and specific: dropping 10% of 60 trades removes 6, so it rarely removes
+all three that carry the result, and the sign survives. Two companion statistics close it and
+cost nothing — the **share of total R held by the best k trades** and the **degradation** of
+the skip test's own 5th percentile against the unskipped return.
+
+The test is not wrong and is not replaced. It is reported with a companion, and the
+companion is what fails on the fourth row.
+
+A related guard: **concentration is undefined on a losing book.** A share of a negative total
+is a negative number that sails past a "< 1.0" threshold. The Phase 14 fixture reported
+**−5.97 and "passed"** before this was caught. It now returns no verdict, which is the honest
+output for a question about how a *profit* is distributed.
+
+### 5. The entry bar is part of the trade
+
+The exit walk started at `entry_bar + 1`. A trade that filled and then hit its stop **inside
+the same bar** was therefore carried to the next bar's open instead. Every such loss was
+delayed and some were missed outright.
+
+**6% of trades on the Phase 14 fixture close on their entry bar** — 15 of 248 — and including
+them moved measured expectancy by up to **0.04R per trade**. BACKTEST_PROTOCOL section 10.1's
+go/no-go threshold is +0.10R, so the bug was worth 40% of the minimum acceptable edge, in the
+flattering direction.
+
+The two fill shapes are not symmetric on that bar and the code now distinguishes them:
+
+- **A market order fills at the bar's open**, so the whole bar happens after the fill and
+  both levels are checkable as on any later bar.
+- **A limit fills inside the bar.** For a buy limit at `p` the fill is the *first* touch of
+  `p`, so the bar's low — which is below `p` — necessarily came at or after it: **a stop below
+  the entry was reached, by continuity.** That is D-013 section 1's argument applied to the
+  other end of the trade. The bar's *high*, though, may have printed before the fill on the
+  way down, so a target hit on the entry bar is **not** credited unless M1 resolves it.
+
+That asymmetry is the honest reading rather than a cautious one: one direction is proved by
+continuity and the other is not. The MFE on such a bar is clamped to the entry for the same
+reason — an excursion the trade could not have had is not an excursion.
+
+### 6. The entry models do not arm on the same setups, and the difference has a direction
+
+SPEC 15.8 asks for the five models as *"separate pre-registered variants over identical
+setups, from one shared setup stream, so the comparison is paired."* The stream is shared.
+The **arming** is not:
+
+| | setups | median displacement |
+|---|---:|---:|
+| Model A armed | 66 | 2.10 ATR |
+| Model A rejected `SL_TOO_WIDE` | 99 | 2.57 ATR |
+| all setups | 165 | 2.30 ATR |
+
+Model A enters at the break price with its stop at the sweep extreme, so **its stop distance
+*is* the displacement leg** — and SPEC 16.3's 2.5-ATR cap rejects it wherever that leg is
+large. The other four enter on a retracement and carry a stop roughly a third as wide (median
+1.51 ATR against 2.24).
+
+So the cap does not thin model A at random. **It removes its strongest-displacement setups
+specifically**, because for this model a strong displacement is a wide stop. Protocol section
+4.4's `E_setup` does not fix it: `E_setup` divides by each model's *own* qualified count, so
+model A is scored on its easy 40% and model B on nearly everything.
+
+`compare_models` now also reports **`E_all_setups`**, dividing by the shared denominator —
+every MSS setup, armed or not. A model that cannot arm takes no trade and earns nothing,
+which is exactly what a per-setup figure exists to charge for. It is the only column in that
+table comparing the five over one population.
+
+This is D-014 section 6 (T4 exempt from the RR gate) recurring on the entry axis, and the two
+together say something worth stating plainly: **"paired" is a property of the comparison, not
+of the setup stream, and every gate between the stream and the trade can break it.**
+
+### 7. SPEC 21.3's counterfactual, measured two wrong ways at once
+
+*"Rejection record ... `forward_return_r` computed by simulating the planned trade over the
+next `analysis.forward_bars` bars."* Implemented literally, it distorts twice:
+
+- **From the planned entry price.** A bullish limit sits below the market, so measuring
+  forward from it starts at a price the trade never paid. The fixture reported a median
+  **+1.7R at a 92% win rate — on a random walk.**
+- **In R against the planned risk.** Several rejection reasons are precisely that *the risk
+  was wrong*: `SL_TOO_TIGHT` rejects a 0.37-pip stop, and dividing by it reported **+7.0R**.
+  The denominator, not the market, is what that number measures.
+
+The reference is now the **MSS bar's close** — the price at the moment the gate fired, shared
+by every gate — and the normaliser is **ATR**, this project's normaliser everywhere else
+(SPEC 1.6) and defined for every setup regardless of what the gate objected to.
+`OPPOSING_SWEEP` then reads **+0.002 ATR at a 45% hit rate**, which is the correct answer on
+a random walk and was invisible before.
+
+### 8. One row of that table is a tautology and will be misread
+
+`ENTRY_EXPIRED` still reads **+1.37 ATR at 76%** after the fix, and it is not a bug.
+
+An order expires unfilled precisely when price never retraced to the limit — which for a
+bullish setup means price went *up* and kept going. Measuring the forward move in the setup's
+direction on that population selects for exactly that move. **The setups a limit misses are,
+by construction, the ones that ran.**
+
+It must never be read as "the expiry rule destroys edge". It is the mechanical cost of using
+a limit at all, it is the quantity SPEC 15.6's shadow trades exist to price, and the correct
+comparison is against what a *market* entry on the same setups would have paid — model A's
+column in the bake-off — not against zero. Recorded here because the rejection table is the
+most useful artefact the engine produces and this row is the one most able to mislead.
+
+### 9. Two-pass, and why R being portfolio-free is structural
+
+The engine is deliberately split: **pass one is geometry** (stop caps, RR gate, arming, fill,
+exit path) and **pass two is the portfolio** (limits, sizing, equity). Everything pass one
+produces — entry bar, exit bar, **R** — depends only on prices and configuration.
+
+Protocol 4.1 makes R primary because *"net return conflates edge with position sizing and
+with the compounding path; R-expectancy is the property of the strategy itself."* Computing
+it in a pass that cannot see equity is how that claim is made true rather than asserted, and
+`test_r_multiple_does_not_depend_on_equity` pins it.
+
+**Pass one does not size, and an earlier version's doing so was a real leak.** SPEC 18.2's
+rejections are functions of equity, so running them in the portfolio-free pass made its
+population depend on a nominal account size chosen for convenience — change the constant and
+the funnel changed. `evaluate(..., skip_sizing=True)` now keeps the two apart, and
+`SIZE_BELOW_MIN` appears where it belongs, in pass two, where Phase 13's account sweep already
+measured how much of the stream it removes.
+
+**Entries are processed before exits within one bar.** A market entry fills at the bar's open
+while an exit happens somewhere inside it, so opening first is what the prices support. It is
+also the choice that does not invent capacity: freeing a position slot using a close whose
+time within the bar is unknown would let a trade in that the limits should have refused.
+
+### 10. A redundant guard is an untested guard, one phase later
+
+D-014 section 8 recorded that a mutation deleting the drawdown ladder's clamp survived the
+entire suite, because a config validator fired first and hid it. **The same thing happened
+again in `manage_stop`**: each management branch clamped internally (`max(stop, be)`,
+`max(stop, trail)`) *and* the function clamped at the end, so the final clamp was unreachable
+and a mutation removing it changed nothing.
+
+Fixed by restructuring rather than by adding a test: the branches now *propose* and one clamp
+*decides*. The invariant has one enforcement point, that point is reachable, and a mutation
+removing it fails.
+
+Seventeen mutations were run against the Phase 14 suite. Six survived the first pass — the
+two clamps above, two cost tests whose tolerances were wider than the effect they were
+meant to detect, the pass-one equity leak, and the losing-book concentration guard. All
+seventeen are now caught.
+
+### 11. What Phase 14 deliberately did not build
+
+- **The falsification suite (protocol section 6)** — shuffled liquidity (H3), sweep-only,
+  CHoCH-only, reversed-order and random-time controls (H4). The protocol calls these *"the
+  most informative runs in the project"* and they are the phase's largest omission. They are
+  studies rather than engine, and every one of them asks a question that is meaningless on a
+  fixture whose true effect is zero by construction: a shuffled-liquidity control that
+  "performs the same" as the real thing proves nothing when neither performs at all. They
+  need real bars, and they are the first thing to build after the data lands.
+- **Walk-forward (section 8) and the OOS budget ledger (section 7).** Both are procedures
+  over real splits. There is no out-of-sample period to spend budget on.
+- **The pre-registration (section 1).** Due before the first *strategy* backtest, which this
+  is not — a synthetic run validates an instrument. Writing it is the first action when data
+  arrives and it must precede the first real run, because a pre-registration written after
+  seeing a result is not one.
+- **`events.jsonl` and the Parquet artefacts (SPEC 21.1).** The engine holds trades and
+  rejections in memory and the report reads them there. The log is the primary artefact in
+  the specification and `trades`/`rejections` are meant to be *derived* from it; that
+  inversion is fine while one process produces and consumes both, and must be fixed before
+  Phase 16's paper trading, which reconciles a live log against a backtest.
+- **Partial fills** (SPEC 15.4, 24 item 9). Modelled nowhere; the engine fills whole or not
+  at all. Needs broker behaviour to model, and the spec already says such trades are excluded
+  from headline expectancy and reported separately.
+- **The MTF bias gate.** `bias.gate_mode = none` throughout (Phases 2–4 unbuilt), so every
+  count in the Phase 14 report is an upper bound: a real gate can only reduce it.

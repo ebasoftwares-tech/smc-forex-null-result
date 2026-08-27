@@ -47,6 +47,7 @@ import numpy as np
 
 from bot.config.schema import AppConfig
 from bot.core.bars import BarSeries, from_epoch_s
+from bot.core.ids import object_id
 from bot.core.indicators import atr_ref
 
 
@@ -253,7 +254,13 @@ def detect_fvgs(series: BarSeries, cfg: AppConfig) -> list[Fvg]:
 
         out.append(
             Fvg(
-                id=f"FV{len(out):06d}",
+                id=object_id(
+                    "FV",
+                    symbol=series.symbol,
+                    timeframe=series.timeframe,
+                    at=from_epoch_s(series.close_time[n]),
+                    key=(direction.value, lo, hi),
+                ),
                 symbol=series.symbol,
                 timeframe=series.timeframe,
                 direction=direction,

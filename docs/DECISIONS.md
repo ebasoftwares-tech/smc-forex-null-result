@@ -1867,3 +1867,174 @@ seventeen are now caught.
   from headline expectancy and reported separately.
 - **The MTF bias gate.** `bias.gate_mode = none` throughout (Phases 2–4 unbuilt), so every
   count in the Phase 14 report is an upper bound: a real gate can only reduce it.
+
+---
+
+## D-016 — The falsification suite, and an acceptance criterion that geometry can satisfy
+
+| | |
+|---|---|
+| **Date** | 2026-08-28 |
+| **Status** | ACTIVE |
+| **Trigger** | Building `BACKTEST_PROTOCOL.md` sections 6.3 and 6.4 (`bot/research/falsification.py`, `scripts/falsification_report.py`) |
+
+D-015 item 11 listed this as Phase 14's largest omission and said it needed real bars. That
+is still true of the *results*. It turned out not to be true of the *construction*: building
+the arms surfaced a problem in section 10.1's acceptance criterion that has nothing to do
+with what data it is run on, and would otherwise have been discovered on real bars only by
+being acted on.
+
+### 1. Section 10.1's falsification row can be cleared on stop width alone
+
+The row is the one section 10.1 calls the most important and the most likely to fail:
+
+> *"Full model beats **every** control in 6.3 and 6.4 by a margin whose CI excludes zero."*
+
+On the synthetic fixture the baseline beats `sweep_only` by **+0.125 R per setup, CI
+[0.019, 0.229]** — excluding zero, so the row is satisfied — **on a random walk, where the
+true difference is zero by construction**. That should be impossible.
+
+It is not a bug in the engine or in the arm. **R is a ratio, and the arms do not share its
+denominator.**
+
+| | baseline | `sweep_only` |
+|---|---:|---:|
+| median stop (ATR) | 2.24 | 0.96 |
+| E/setup, gross R | −0.034 | −0.051 |
+| cost, in R | +0.028 | +0.135 |
+| E/setup, net R | −0.062 | −0.186 |
+
+The gross delta is **+0.018 R, CI [−0.084, 0.123]** — containing zero, which is the correct
+answer. The entire net-R gap is transaction cost. A control entering at the sweep
+confirmation stops just beyond an extreme a bar or two old; the baseline waits for a CHoCH
+and stops beyond an extreme up to twelve bars back. A fixed spread and commission against a
+stop half as wide is twice the cost *per R* — and in net R that is indistinguishable from
+signal.
+
+**Three of the five arms are affected**, and the inflation tracks stop width exactly:
+
+| Arm | median SL (ATR) | net delta | gross delta | inflation |
+|---|---:|---:|---:|---:|
+| `shuffled_liquidity` | 2.27 | −0.041 | −0.045 | 0.004 |
+| `sweep_only` | 0.96 | +0.125 | +0.018 | **0.107** |
+| `choch_only` | 2.23 | −0.045 | −0.056 | 0.011 |
+| `reversed_order` | 0.96 | +0.092 | −0.012 | **0.104** |
+| `random_time` | 1.18 | +0.080 | +0.001 | **0.078** |
+
+`random_time` is the one that matters most, because it is the **floor**: a baseline that
+beats random entry in net R has not thereby shown it has a signal, only that it waits longer
+before committing.
+
+**Every arm is reported in both currencies and no decision has been taken.** Section 10.2
+forbids moving a criterion to make a result appear, and that applies to a criterion as much
+as to a parameter. The three options, for the pre-registration to settle *before* real bars:
+
+1. Read the row in gross R — a test of signal, losing the point that a strategy must pay its
+   costs to be worth trading.
+2. Keep net R and require **both**, treating a net-only win as not demonstrating the
+   sequence. This is what the report does.
+3. Match stop distance across arms — which changes what the controls are. A sweep-only arm
+   with the baseline's stop is not "enter on sweep confirmation".
+
+This is the same species as D-015's four free lunches and D-013 section 1: a number that
+looks like a measurement of the market and is a measurement of the construction.
+
+### 2. The shipped default entry model cannot run half the section 6.4 suite
+
+At `entry.model = C` (the default), `sweep_only` and `reversed_order` arm **zero** orders —
+100% `NO_FVG_AVAILABLE`. Structural, not a fixture artefact: both enter at the sweep
+confirmation, so their displacement leg spans at most `sweep.max_confirmation_bars` and has
+a **median length of 0 bars, maximum 2**. An FVG needs three. So section 10.1's row is
+undefined at the shipped default — "beats every control" cannot be evaluated against an arm
+with no trades.
+
+The suite therefore runs at **model A**, which is also the only 100%-fill model (D-013
+section 5), so an arm's trade count reflects its setup count rather than its FVG
+availability. Pinned by a test, because the natural "fix" is to change the arm.
+
+### 3. `choch_only` must not be built on `structure.py`'s CHoCH events
+
+The obvious construction is wrong and fails invisibly. A structure `CHOCH` is a trend flip
+through the **protected** level; SPEC 11.2's CHoCH — the one the baseline trades — is a break
+of the **last unbroken swing** inside the sweep window. An arm built on the former differs
+from the baseline in the definition of the thing under test, and its inevitable null then
+reads as *"the sweep requirement only reduces sample size"* when what was measured was a
+stricter break rule.
+
+So the arm calls `MssEngine._major_reference` itself, private and all. `breaks_level`'s own
+docstring already records that two copies of the break test in two modules is how SPEC 11.2's
+"this test and no other" quietly stops holding; the same argument applies one level up, to
+the *selection* of what gets broken.
+
+**The two counts are too close for a size check to catch the error.** The wrong construction
+gives 26 events against 82 baseline setups on one fixture year, and 43 against 41 on another
+— larger on one and smaller on the other. The test asserts on *which bars fire* instead.
+
+### 4. A control is a setup stream, not a second engine
+
+Four of the five arms substitute `Market.setup_override`; the fifth substitutes the level
+book through `analyse_sweeps(level_transform=...)`. Both seams are inert when unused, pinned
+by tests, and the 578 pre-existing tests are unchanged.
+
+The alternative — reimplementing the pipeline per arm — was rejected for a specific reason
+rather than on style: an arm that re-stated the admission order, the merge fixpoint or the
+fill discipline could differ from the baseline for a reason that is not the one being tested,
+and **no amount of care would make that visible**, because the arm's output looks the same
+either way. It is the one property that makes a control a control.
+
+The shuffle holds count-per-day and age **exactly** rather than in distribution — same
+`confirmed_at`, same `formed_at`, same side/source/tier/strength; only `price` moves — which
+is stronger than section 6.3 asks and removes a class of confound: a difference between the
+arms cannot be that one had more levels, or older ones. Prices are redrawn from the empirical
+signed-distance-in-ATR pool **per side**; losing the sign or the side would test whether
+levels are on the correct side of the market, an easier question the real book wins trivially.
+
+### 5. Three guards nothing in the fixture reaches — the pattern, for the third time
+
+D-014 section 8 and D-015's `manage_stop` both recorded a rule enforced somewhere no test
+goes. Three of the first eighteen mutations here survived for the same reason:
+
+| Guard | Why the fixture never reaches it |
+|---|---|
+| `placeholder_sweep`'s `trigger_bar` in the id key | No two legs in the fixture share an extreme, so no collision occurs — but `choch_only` scans every bar and two references broken three bars apart can share one. The cost is silent and doubled: `arm_from` credits one setup's R and scores its twin 0.0, and `run`'s `live` dict loses a position to an overwritten key |
+| `_leg_extreme`'s direction | Inverting it still produces trades and still reports a null |
+| `choch.max_reference_distance_atr` in `choch_only` | At the FROZEN default of 3.0 it rejects **nothing** — the widest reference on the fixture sits at 2.81 ATR, across 198 events in three years |
+
+The third is different in kind from D-014's four unreachable defaults, and the difference
+matters: those were **arithmetic impossibilities**, this is a **measurement**. It is an
+ABLATION parameter over {2.0, 3.0, 4.0} and **at 2.0 it binds hard**, which is how the branch
+is now tested. It also echoes STATE.md section 3 — the Phase 9 gate is not robust to this
+same parameter — making this the second place where 3.0 sits just past where the fixture
+reaches.
+
+**18/18 mutations are caught.**
+
+### 6. Three asymmetries between the arms that no construction removes
+
+Recorded because each is a real limit on what the report can say, and each is easier to
+discover here than in a result:
+
+1. **`choch_only` and `random_time` have no sweep**, so their setups carry a placeholder
+   `SweepEvent`. Every field that would be a measurement is NaN or an out-of-range sentinel
+   (`level_tier = 0`), so a liquidity breakdown over those arms is loudly wrong rather than
+   quietly plausible. `ControlSpec.has_liquidity` says which arms may be broken down that way.
+2. **The leg origin is *searched* in the sweepless arms and *clamped* in the baseline.**
+   D-009 section 11 records that the real path never looks for the leg origin. Without a
+   sweep there is nothing to clamp to. **This favours the control** — a searched origin can
+   only displace at least as much.
+3. **Reversing the order moves the stop anchor** onto the event being entered on. No
+   construction reverses the order and holds both the trigger and the anchor fixed; they are
+   the same two events. `reversed_order` holds the SL/TP *models* constant, which is what
+   section 6.4 asks, and not the distance — which is exactly what item 1 of this decision
+   then bites on.
+
+### 7. What is still not built
+
+An **end-to-end positive control**: an injected edge surviving the whole chain from prices to
+a `DIFFERENT` verdict. The positive control that exists covers the comparison layer, and the
+per-arm tests cover each construction, but nothing demonstrates that a real conditional edge
+in the *price series* comes out the other end. Building one needs a synthetic market with a
+genuine SMC edge — injecting drift after each MSS changes the prices, which changes the
+sweeps, which changes the MSS set. Recorded as a limitation rather than solved.
+
+Section 6.5's ablation matrix remains unbuilt and is the natural next piece.

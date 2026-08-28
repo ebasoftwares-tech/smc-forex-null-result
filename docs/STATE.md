@@ -1,6 +1,6 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-27, after Phase 14.
+Last updated: 2026-08-28, after the falsification suite.
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -28,17 +28,19 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | | |
 |---|---|
 | **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 |
-| **Tests** | 578, all passing |
-| **Commits** | 12, on `master` |
+| **Studies complete** | H5 (SPEC 6.9), **the falsification suite (protocol 6.3/6.4)** |
+| **Tests** | 608, all passing |
+| **Commits** | 14, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 425 tests, ~28s
+.venv/Scripts/python.exe -m pytest tests/          # 608 tests, ~75s
 .venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
 .venv/Scripts/python.exe scripts/phase12_report.py  # the Phase 12 entry engine
 .venv/Scripts/python.exe scripts/phase13_report.py  # the Phase 13 risk layer
 .venv/Scripts/python.exe scripts/phase14_report.py  # the Phase 14 backtest engine
 .venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
+.venv/Scripts/python.exe scripts/falsification_report.py   # protocol 6.3/6.4, ~11 min
 ```
 
 ### Phases built
@@ -57,6 +59,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 12 | Entry engine — five models, fill resolution against M1 | `reports/phase12_gate.md` | 8/8 — a "conservative" fill default that was neither, see D-013 |
 | 13 | Risk — stops S1–S4, the RR gate, sizing, limits | `reports/phase13_gate.md` | 8/8 — **four defaults that cannot fire**, see D-014 |
 | 14 | Backtest engine — exits, costs, metrics, Monte Carlo | `reports/phase14_gate.md` | 10/10 — **four free lunches found and closed**, see D-015 |
+| — | **The falsification suite**: shuffled liquidity, sweep-only, CHoCH-only, reversed-order, random-time (protocol 6.3/6.4) | `reports/falsification.md` | Built and validated — **and section 10.1's own acceptance row turns out to be satisfiable by stop width**, see D-016 |
 
 **Phase 5 was built before 2–4 deliberately**: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
@@ -66,11 +69,10 @@ mostly configuration.
 
 Phases 2–4 (Monthly/Weekly/Daily bias), 15–17 (charts, paper, live).
 
-**Phase 14 built the engine, not the falsification suite.** `BACKTEST_PROTOCOL.md` §6's
-controls — shuffled liquidity (H3), sweep-only, CHoCH-only, reversed-order, random-time
-(H4) — are the protocol's *"most informative runs in the project"* and are deliberately
-unbuilt. They are studies rather than engine, and every one asks a question that is
-meaningless on a fixture whose true effect is zero by construction. See §9.
+**The falsification suite is now built** (§3d). What is *not* built from
+`BACKTEST_PROTOCOL.md` §6 is **§6.5's ablation matrix**, which is the natural next piece.
+Every arm's result is still meaningless on a fixture whose true effect is zero by
+construction — but building it was not, which is the point of §3d.
 
 ---
 
@@ -210,6 +212,71 @@ later, with each branch clamping internally *and* a final clamp that no input co
 Fixed by restructuring so the branches propose and one clamp decides. 17 mutations were run;
 6 survived the first pass, all 17 are caught now.
 
+## 3d. The falsification suite, and the criterion it broke
+
+`reports/falsification.md`. §10.1 has eleven go/no-go rows and says which one decides the
+question:
+
+> *"The last falsification row is the one that matters most and is the one most likely to
+> fail. A strategy that beats a null model but not a sweep-only control has not
+> demonstrated the thing it claims to demonstrate."*
+
+All five arms are built — shuffled liquidity (H3), sweep-only, CHoCH-only, reversed-order
+and random-time — and every one runs through the **unmodified** `run()`. Their *results*
+are worthless on this fixture and always were going to be, for the reason D-015 gave when
+it deferred them. **Building them was not.**
+
+### The finding: §10.1's row can be cleared on stop width alone
+
+On a random walk, where the true difference is zero by construction, the baseline beats
+`sweep_only` by **+0.125 R/setup, CI [0.019, 0.229]** — excluding zero, so the row is
+*satisfied*. That is not a bug. **R is a ratio and the arms do not share its denominator:**
+
+| Arm | median SL (ATR) | net delta | gross delta | inflation |
+|---|---:|---:|---:|---:|
+| `shuffled_liquidity` | 2.27 | −0.041 | −0.045 | 0.004 |
+| `sweep_only` | 0.96 | +0.125 | +0.018 | **0.107** |
+| `choch_only` | 2.23 | −0.045 | −0.056 | 0.011 |
+| `reversed_order` | 0.96 | +0.092 | −0.012 | **0.104** |
+| `random_time` | 1.18 | +0.080 | +0.001 | **0.078** |
+
+In **gross** R the baseline beats **0 of 5** and every CI contains zero, which is the
+correct answer. In **net** R it beats 1 of 5. The whole gap is transaction cost: an arm
+entering at the sweep stops just beyond an extreme a bar or two old, the baseline stops
+beyond one up to twelve bars back, and a fixed spread against a stop half as wide is twice
+the cost *per R*.
+
+**Any control that enters earlier than the baseline is cost-inflated this way**, including
+`random_time` — which matters most, because it is the floor. Both currencies are reported
+and **no decision has been taken**: §10.2 forbids moving a criterion to make a result
+appear, and that binds on a criterion as much as on a parameter. The three options are in
+D-016 §1 and belong in the pre-registration, before real bars.
+
+### Four more things to carry forward
+
+1. **The suite cannot run at the configured default entry model.** At `entry.model = C`,
+   `sweep_only` and `reversed_order` arm **zero** orders, 100% `NO_FVG_AVAILABLE`.
+   Structural: both enter at the sweep confirmation, so their leg is **median 0 bars, max
+   2**, and an FVG needs three. §10.1's row is undefined at the shipped default. The suite
+   runs at **model A**, the only 100%-fill model.
+2. **`choch_only` must not be built on `structure.py`'s CHoCH events** — a trend flip
+   through the *protected* level is a stricter and different thing from SPEC 11.2's break
+   of the *last unbroken swing*. It reuses `MssEngine._major_reference` itself. The two
+   counts are too close for a size check to catch the error (26 vs 82 on one fixture year,
+   43 vs 41 on another — larger on one, smaller on the other).
+3. **Three guards nothing in the fixture reaches**, the same pattern D-014 §8 and D-015
+   named. One is worth separating: `choch.max_reference_distance_atr` rejects **nothing**
+   at its default of 3.0 (widest reference 2.81 ATR over 198 events) but **binds hard at
+   2.0**. Unlike D-014's four unreachable defaults this is a *measurement*, not arithmetic
+   — and it is the second place this same ABLATION parameter sits just past where the data
+   reaches (§3, the Phase 9 gate).
+4. **An end-to-end positive control does not exist and is hard.** The comparison layer has
+   one and each arm's construction has one, but nothing shows a real conditional edge in
+   the *price series* surviving the whole chain. Injecting drift after each MSS changes the
+   prices, which changes the sweeps, which changes the MSS set.
+
+---
+
 ## 4. Module map
 
 ```
@@ -225,10 +292,11 @@ bot/backtest/   engine.py (two passes), metrics.py (protocol 4), montecarlo.py
 bot/research/   stats.py (shared primitives), sweep_study.py (H2),
                 displacement_study.py (SPEC 10.6), funnel.py (SPEC 11.7),
                 marginal_value.py (H5), fvg_study.py (SPEC 12.6),
-                ob_study.py (SPEC 13.8), risk_study.py (SPEC 18.9)
+                ob_study.py (SPEC 13.8), risk_study.py (SPEC 18.9),
+                falsification.py (protocol 6.3/6.4 -- the five controls)
 scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11,12,13,14}_report.py,
-                marginal_value_report.py, regen_golden.py
-tests/          578 tests + tests/golden/structure_h4.json
+                marginal_value_report.py, falsification_report.py, regen_golden.py
+tests/          608 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -251,7 +319,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-015 record corrections and findings from each phase's implementation.
+D-004 through D-016 record corrections and findings from each phase's implementation.
 
 ---
 
@@ -309,12 +377,18 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 46 | **Pass one must not size.** SPEC 18.2's rejections are equity-dependent, so running them in the portfolio-free pass makes its population depend on an account size (D-015 §9). |
 | 47 | **The rejection log's forward return is in ATR from the MSS close.** Not R from the planned entry — that reads +1.7R at 92% on a random walk (D-015 §7). |
 | 48 | **Entries are processed before exits within one bar**, so a slot is never freed by a close whose time inside the bar is unknown. |
+| 49 | **R is a ratio and the arms of a comparison rarely share its denominator.** An arm entering earlier has a tighter stop, so a fixed spread costs it more *per R* — enough to satisfy §10.1's falsification row on a random walk. Compare in **gross and net R both**; a net-only win is geometry (D-016 §1). |
+| 50 | **The falsification suite cannot run at `entry.model = C`.** Sweep-only and reversed-order enter at the sweep confirmation, so their leg is median 0 bars and an FVG needs 3: both arm zero orders, on any data. It runs at model A (D-016 §2). |
+| 51 | **`choch_only` is not `structure.py`'s CHOCH events.** A trend flip through the *protected* level is stricter and different from SPEC 11.2's break of the *last unbroken swing*. Build it on `MssEngine._major_reference`, and never check it by counting — the two counts cross between fixtures (D-016 §3). |
+| 52 | **A control substitutes a setup stream (`Market.setup_override`) or a level book (`analyse_sweeps(level_transform=...)`), never a second engine.** An arm that re-stated the admission order or the fill discipline could differ from the baseline for a reason that is not under test, and nothing in its output would show it (D-016 §4). |
+| 53 | **`Trade.setup_id` is the sweep id**, so two setups sharing one are scored as a trade plus a phantom 0.0 *and* collide in `run`'s `live` dict. The sweepless arms mint their own ids and must key on the trigger bar (D-016 §5). |
 
 ---
 
-## 7. Five statistical lessons already learned the hard way
+## 7. Statistical lessons already learned the hard way
 
-All five are the same mistake at different scales, and all five are now pinned by tests.
+The first seven are the same mistake at different scales. The last two are a different
+mistake, and every one of them is now pinned by tests.
 
 - **Phase 7:** 3 of 20 year×horizon significance tests fired on a random walk (≈1
   expected). The multiple-testing problem on data whose true effect is zero *by
@@ -355,7 +429,24 @@ All five are the same mistake at different scales, and all five are now pinned b
   place. **Twice in two phases is a pattern, not an accident: check for it whenever a rule
   is enforced in more than one spot.**
 
+- **The falsification suite:** the same lesson, moved off the *statistic* and onto the
+  *unit*. Every earlier instance was a number not compared against noise; this one was
+  compared against noise correctly and still separated, because the two arms did not share
+  the denominator of the ratio they were compared in. A tighter stop costs more per R, and
+  in net R that is indistinguishable from signal — enough to satisfy §10.1's own acceptance
+  row on a random walk. **Check that a ratio's denominator is held fixed before reading a
+  difference in it as an effect** (D-016 §1).
+
+- **And the guard-nothing-reaches pattern arrived for the third time**, as D-015 predicted it
+  would: three of the first eighteen mutations survived because the fixture never reaches the
+  rule. One of them, `choch.max_reference_distance_atr`, is different from D-014's four
+  unreachable defaults in a way worth keeping — those were arithmetic impossibilities, this
+  is a *measurement* that binds at another of its own ABLATION values. **A guard that no test
+  reaches through the front door needs a test that goes in the side door**, and if it has a
+  configuration where it does fire, that configuration is the side door.
+
 **A statistic not compared against what noise alone would produce is not a finding.**
+**And a statistic compared in a unit the two arms do not share is not one either.**
 
 Every study module carries a **positive control** as well as a null result. A study that
 can only ever say "no edge" would pass the random-walk fixture and be worthless.
@@ -412,6 +503,15 @@ no participants and no structure, so:
   spanning both a 1R stop and a 2R target needs a range of ~4.4 ATR. All three are pinned
   by constructed tests and all three are first in line on real bars.
 
+- **The falsification suite's five arms are the sharpest case in the project.** Their
+  whole purpose is to answer "does this component contribute?", and this fixture answers
+  *no* for every one of them **by construction**, including the real ones. That makes them
+  the one place where the guaranteed null is also the publishable conclusion — §6.3 invites
+  the reader to act on it (*"rebuilt as a mean-reversion model and the SMC framing
+  dropped"*). Nothing in `reports/falsification.md` licenses that, and the report says so
+  before it says anything else. What the run does establish is the instrument, plus one
+  finding about the *acceptance criterion* that is independent of the data (§3d).
+
 `bot/data/synthetic.py` says so in its own docstring and is never used to produce a
 strategy result.
 
@@ -425,12 +525,11 @@ and one of its findings is that part of it may not be answerable on real data ei
 (§3a). So the design stands and the next phases are the ones that turn an event into a
 trade.
 
-### The falsification suite is the next real deliverable
+### The falsification suite is built; §6.5's ablation matrix is what remains
 
-`BACKTEST_PROTOCOL.md` §6 is the largest thing still unbuilt, and the protocol calls it
-*"the most informative runs in the project"*. Phase 14 deliberately left it: every control
-in it asks whether a component contributes, and on a fixture whose true effect is zero by
-construction the answer is "no" for all of them, including the real ones.
+`BACKTEST_PROTOCOL.md` §6.3 and §6.4 are done (§3d, D-016). All five arms run through the
+unmodified `run()`, 30 tests and 18/18 mutations pin them, and `scripts/falsification_report.py`
+writes `reports/falsification.md` in about eleven minutes.
 
 | Control | Tests | What a null verdict would mean |
 |---|---|---|
@@ -440,10 +539,17 @@ construction the answer is "no" for all of them, including the real ones.
 | Reversed order (§6.4) | H4 | The *sequence* is not what works |
 | Random-time (§6.4) | — | The floor: what this SL/TP geometry pays with no signal at all |
 
-The engine is built to run them: `run(cfg, market, ...)` takes a `Market` and every control
-is a `Market` built differently, so none of them needs a second engine. §10.1's go/no-go has
-this as the row *"most likely to fail"* and says why: *"a strategy that beats a null model
-but not a sweep-only control has not demonstrated the thing it claims to demonstrate."*
+**None of those verdicts can be read yet** and none is read in the report: on a random walk
+every arm's true effect is zero by construction, so a null is the fixture speaking. What the
+run establishes is that the instrument works — and, unexpectedly, that **§10.1's acceptance
+row does not**, in a way that has nothing to do with the data (§3d).
+
+**§6.5's ablation matrix is now the largest unbuilt piece of the protocol**: one component
+toggled at a time against the baseline, each a delta with a block-bootstrap CI. It shares
+this suite's comparison machinery (`falsification.compare`, the declared margin, the
+three-way verdict) and inherits D-016 §1 directly — **every ablation that changes the stop
+distance is cost-confounded the same way**, and there are several (each SL model, the entry
+models, `disp.max_leg_bars`).
 
 Everything else in the protocol that remains — walk-forward (§8), the OOS budget ledger
 (§7), the pre-registration (§1) — is a procedure over real splits and cannot start earlier.
@@ -458,9 +564,11 @@ no broker chosen. Until then:
 - Phase 9's gate stays PASS-on-projection.
 - H5 stays open: on a random walk the true MSS vs CHoCH-not-MSS difference is zero by
   construction, so the study can only ever validate its own instrument.
+- **H3 and H4 stay open for the same reason** — the falsification suite is built and every
+  arm's verdict is a property of the fixture, not of the market (§3d).
 - Every study runs on synthetic data and can only validate instruments, not measure edge.
 
-**This is still the single highest-value action in the project.** Six engines and two
+**This is still the single highest-value action in the project.** Six engines and three
 studies are built, and none of their numbers mean anything about markets yet.
 
 ### When real data lands, run these in this order
@@ -487,22 +595,27 @@ studies are built, and none of their numbers mean anything about markets yet.
    three effects this fixture measures as exactly zero: SPEC 15.3's lookahead, the S4
    stop's movement at fill, and SPEC 17.5's intrabar ambiguity. Also the rejection table,
    which is the only place a filter can be shown to be destroying edge.
-7. **The §6 falsification suite**, which is the one that decides whether the project has
-   demonstrated what it claims. Everything before it can pass while this fails.
+7. **`scripts/falsification_report.py`** — the §6.3/6.4 suite, which is the one that
+   decides whether the project has demonstrated what it claims. Everything before it can
+   pass while this fails. **Read the gross-R table before the net-R one** (D-016 §1), and
+   settle which of the two §10.1 is to be judged in *before* running it, not after.
 8. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
    TUNABLE/ABLATION split.
 
 ### Before the first real backtest
 
-1. **Write the pre-registration** (`BACKTEST_PROTOCOL.md` §1) and commit its hash. It is
+1. **Settle D-016 §1** — whether §10.1's falsification row is judged in gross R, net R,
+   or both. It has to be decided in the pre-registration, because after a result is seen
+   the choice selects the answer (§10.2). The suite reports both and takes no position.
+2. **Write the pre-registration** (`BACKTEST_PROTOCOL.md` §1) and commit its hash. It is
    due before the first *strategy* backtest — a synthetic run validates an instrument, so
    nothing so far has triggered it. Six of its seven items are already determined by
    existing documents; only the date ranges wait on the data. **A pre-registration written
    after seeing a result is not one.**
-2. **Take the four D-014 decisions**, or the ablation grid has holes: T3 arms on no setup
+3. **Take the four D-014 decisions**, or the ablation grid has holes: T3 arms on no setup
    at the default `min_rr`, T4 runs on a different population from T1–T2, and two SPEC 18
    safety checks are inert.
-3. **Build `events.jsonl`** (SPEC 21.1). The engine currently holds trades and rejections
+4. **Build `events.jsonl`** (SPEC 21.1). The engine currently holds trades and rejections
    in memory and the report reads them there, which inverts the specification's
    relationship — the log is the primary artefact and the tables are derived from it. Fine
    while one process does both; a blocker for Phase 16, which reconciles a live log against

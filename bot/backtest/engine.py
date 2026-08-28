@@ -111,14 +111,34 @@ class Market:
     sessions_by_bar: dict[int, str]
     levels_created: int
     sweeps_confirmed: int
+    #: BACKTEST_PROTOCOL section 6.4's controls, and nothing else, set this.  A control
+    #: is a *different setup stream over the same prices*, so it replaces the stream
+    #: rather than the market -- which is what keeps every control comparable to the
+    #: baseline and to each other.  ``None`` is the strategy, and the default.
+    setup_override: tuple[SetupCandidate, ...] | None = None
 
     @property
     def setups(self) -> list[SetupCandidate]:
-        """SPEC 14.2 step 5: displaced CHoCH events, which is what an MSS is."""
+        """SPEC 14.2 step 5: displaced CHoCH events, which is what an MSS is.
+
+        A section 6.4 control substitutes its own stream here.  It is deliberately an
+        override rather than a flag the filter reads: ``sweep_only`` triggers on a bar
+        where no CHoCH exists at all, so there is no predicate over ``mss.candidates``
+        that could express it, and a control that had to fabricate MSS records to be
+        run would be indistinguishable in the output from the thing it is a control for.
+        """
+        if self.setup_override is not None:
+            return list(self.setup_override)
         return [c for c in self.mss.candidates if c.is_choch and c.displacement.confirmed]
 
 
-def build_market(cfg: AppConfig, m1: BarSeries, *, keep_m1: bool = True) -> Market:
+def build_market(
+    cfg: AppConfig,
+    m1: BarSeries,
+    *,
+    keep_m1: bool = True,
+    level_transform=None,
+) -> Market:
     """Run the whole pipeline once, in STATE_MACHINE section 4's order.
 
     Steps 1–8 of that ordering are the engines below; step 9 onward is ``run``. The two
@@ -134,6 +154,7 @@ def build_market(cfg: AppConfig, m1: BarSeries, *, keep_m1: bool = True) -> Mark
     book, sweeps = analyse_sweeps(
         cfg=cfg, h4=h4, d1=d1, w1=resample(m1, "W1", cfg), mn1=resample(m1, "MN1", cfg),
         sessions=sessions, h4_structure=structure, d1_swings=detect_swings(d1, cfg),
+        level_transform=level_transform,
     )
     fvgs = detect_fvgs(h4, cfg)
     confirmed = sweeps.confirmed()

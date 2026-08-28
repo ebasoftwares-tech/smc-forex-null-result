@@ -510,6 +510,7 @@ def analyse_sweeps(
     sessions: Sequence = (),
     h4_structure=None,
     d1_swings=None,
+    level_transform=None,
 ) -> tuple[LiquidityBook, SweepResult]:
     """Run the liquidity and sweep engines interleaved, one H4 bar at a time.
 
@@ -518,6 +519,13 @@ def analyse_sweeps(
     as dead by the sweep engine, and a level admitted on this bar must be visible to it.
     Running the two engines to completion one after the other instead would let a sweep
     fire against a level that had already been invalidated, or miss one admitted late.
+
+    ``level_transform`` is the seam `BACKTEST_PROTOCOL.md` §6.3's shuffled-liquidity
+    control enters through: it replaces the candidate levels and nothing else, so every
+    engine below this line -- admission, merging, ageing, sweeps -- is provably the same
+    code on both arms.  Reimplementing this loop in the research module instead would
+    put the interleave order above at risk of drifting between the control and the
+    thing it is a control for, which is the one difference that must not exist.
     """
     from bot.core.liquidity import LiquidityEngine, build_candidates
 
@@ -531,6 +539,8 @@ def analyse_sweeps(
         h4_structure=h4_structure,
         d1_swings=d1_swings,
     )
+    if level_transform is not None:
+        candidates = list(level_transform(candidates))
     liq = LiquidityEngine(
         h4, cfg, candidates, d1_close_times=d1.close_time if d1 is not None else None
     )

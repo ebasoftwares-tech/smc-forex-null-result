@@ -51,24 +51,63 @@ class Verdict(str, Enum):
 # ------------------------------------------------------------------ intervals
 
 
+def _stationary_indices(
+    n: int, block: int, rng: np.random.Generator
+) -> np.ndarray:
+    """One stationary-bootstrap index draw of length ``n`` (Politis & Romano).
+
+    Extracted from ``bootstrap_ci`` when ``bootstrap_diff_ci`` needed the same walk for
+    two samples. Two copies of a resampling scheme is how two studies quietly start
+    answering the same question differently -- the reason this module exists at all.
+    """
+    take = np.empty(n, dtype=np.int64)
+    p_new = 1.0 / block
+    pos = int(rng.integers(0, n))
+    for k in range(n):
+        if k and rng.random() < p_new:
+            pos = int(rng.integers(0, n))
+        take[k] = pos
+        pos = (pos + 1) % n
+    return take
+
+
 def bootstrap_diff_ci(
     a: np.ndarray,
     b: np.ndarray,
     n_boot: int,
     rng: np.random.Generator,
     alpha: float = ALPHA,
+    *,
+    block_a: int | None = None,
+    block_b: int | None = None,
 ) -> tuple[float, float]:
-    """Percentile bootstrap CI on ``mean(a) - mean(b)``.
+    """Percentile bootstrap CI on ``mean(a) - mean(b)``, i.i.d. or stationary-block.
 
     Known to under-cover with a few dozen heavy-tailed observations; the studies that use
     it measure their own false-positive rate with ``null_calibration`` rather than
     assuming nominal coverage (D-010 §5).
+
+    ``block_a`` / ``block_b`` are BACKTEST_PROTOCOL section 5.3's stationary block
+    bootstrap, which section 6.5 requires for every ablation delta. **They are separate
+    because the two arms rarely share a trade density**: an arm producing four times as
+    many setups over the same calendar needs four times the block length to span the same
+    twenty trading days, and using one length for both would resample one arm over a
+    materially different horizon from the other.
     """
     if len(a) < 2 or len(b) < 2:
         return (float("nan"), float("nan"))
-    ia = rng.integers(0, len(a), size=(n_boot, len(a)))
-    ib = rng.integers(0, len(b), size=(n_boot, len(b)))
-    diffs = a[ia].mean(axis=1) - b[ib].mean(axis=1)
+    if (block_a is None or block_a <= 1) and (block_b is None or block_b <= 1):
+        ia = rng.integers(0, len(a), size=(n_boot, len(a)))
+        ib = rng.integers(0, len(b), size=(n_boot, len(b)))
+        diffs = a[ia].mean(axis=1) - b[ib].mean(axis=1)
+    else:
+        diffs = np.empty(n_boot, dtype=np.float64)
+        for k in range(n_boot):
+            ia = (_stationary_indices(len(a), block_a, rng)
+                  if block_a and block_a > 1 else rng.integers(0, len(a), len(a)))
+            ib = (_stationary_indices(len(b), block_b, rng)
+                  if block_b and block_b > 1 else rng.integers(0, len(b), len(b)))
+            diffs[k] = a[ia].mean() - b[ib].mean()
     lo, hi = np.quantile(diffs, [alpha / 2, 1 - alpha / 2])
     return float(lo), float(hi)
 
@@ -101,16 +140,8 @@ def bootstrap_ci(
         means = x[idx].mean(axis=1)
     else:
         means = np.empty(n_boot, dtype=np.float64)
-        p_new = 1.0 / block
         for b in range(n_boot):
-            take = np.empty(n, dtype=np.int64)
-            pos = int(rng.integers(0, n))
-            for k in range(n):
-                if k and rng.random() < p_new:
-                    pos = int(rng.integers(0, n))
-                take[k] = pos
-                pos = (pos + 1) % n
-            means[b] = x[take].mean()
+            means[b] = x[_stationary_indices(n, block, rng)].mean()
     lo, hi = np.quantile(means, [alpha / 2, 1 - alpha / 2])
     return float(lo), float(hi)
 
@@ -162,6 +193,38 @@ def permutation_p(
 
 
 # --------------------------------------------------------------------- power
+
+
+def paired_permutation_p(d: np.ndarray, n_perm: int, rng: np.random.Generator) -> float:
+    """Two-sided sign-flip permutation p-value for a **paired** difference series.
+
+    The unpaired ``permutation_p`` pools and reshuffles, whose null is *"these two samples
+    came from one distribution"*. That is the wrong null for a paired ablation: the two
+    arms are the same setups run twice, so the exchangeable unit is the **sign of each
+    pair's difference**, not the labels. Pooling instead throws away the pairing and
+    reports the far weaker between-arm comparison -- exactly the power the pairing was for.
+    """
+    if len(d) < 2:
+        return float("nan")
+    obs = abs(float(d.mean()))
+    count = 0
+    for _ in range(n_perm):
+        signs = rng.choice((-1.0, 1.0), size=len(d))
+        if abs(float((d * signs).mean())) >= obs:
+            count += 1
+    return (count + 1) / (n_perm + 1)
+
+
+def paired_mde(d: np.ndarray) -> float:
+    """Smallest true paired difference resolvable at ALPHA with POWER.
+
+    Uses the standard error of the difference series itself, which is what makes a paired
+    design worth having: it is the SD of the *difference*, not of either arm.
+    """
+    if len(d) < 2:
+        return float("nan")
+    se = float(d.std(ddof=1)) / np.sqrt(len(d))
+    return float((_Z_ALPHA + _Z_POWER) * se)
 
 
 def _pooled_sd(a: np.ndarray, b: np.ndarray) -> float:

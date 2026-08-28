@@ -1,6 +1,6 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-28, after the falsification suite.
+Last updated: 2026-08-28, after the falsification suite and the ablation matrix.
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -28,19 +28,20 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | | |
 |---|---|
 | **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 |
-| **Studies complete** | H5 (SPEC 6.9), **the falsification suite (protocol 6.3/6.4)** |
-| **Tests** | 608, all passing |
-| **Commits** | 14, on `master` |
+| **Studies complete** | H5 (SPEC 6.9), the falsification suite (protocol 6.3/6.4), **the ablation matrix (6.5)** |
+| **Tests** | 633, all passing |
+| **Commits** | 15, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 608 tests, ~75s
+.venv/Scripts/python.exe -m pytest tests/          # 633 tests, ~110s
 .venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
 .venv/Scripts/python.exe scripts/phase12_report.py  # the Phase 12 entry engine
 .venv/Scripts/python.exe scripts/phase13_report.py  # the Phase 13 risk layer
 .venv/Scripts/python.exe scripts/phase14_report.py  # the Phase 14 backtest engine
 .venv/Scripts/python.exe scripts/marginal_value_report.py  # the H5 study
 .venv/Scripts/python.exe scripts/falsification_report.py   # protocol 6.3/6.4, ~11 min
+.venv/Scripts/python.exe scripts/ablation_report.py        # protocol 6.5, ~20 min
 ```
 
 ### Phases built
@@ -60,6 +61,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 13 | Risk — stops S1–S4, the RR gate, sizing, limits | `reports/phase13_gate.md` | 8/8 — **four defaults that cannot fire**, see D-014 |
 | 14 | Backtest engine — exits, costs, metrics, Monte Carlo | `reports/phase14_gate.md` | 10/10 — **four free lunches found and closed**, see D-015 |
 | — | **The falsification suite**: shuffled liquidity, sweep-only, CHoCH-only, reversed-order, random-time (protocol 6.3/6.4) | `reports/falsification.md` | Built and validated — **and section 10.1's own acceptance row turns out to be satisfiable by stop width**, see D-016 |
+| — | **The ablation matrix** (protocol 6.5) | `reports/ablation.md` | 34 variants over 19 components — **5 of the 19 cannot be toggled at all**, and 7 variants change nothing, see D-017 |
 
 **Phase 5 was built before 2–4 deliberately**: Monthly/Weekly/Daily analysis is the *same*
 engine instantiated on other bar series (SPEC 7.1), so building it once at H4 makes 2–4
@@ -69,10 +71,11 @@ mostly configuration.
 
 Phases 2–4 (Monthly/Weekly/Daily bias), 15–17 (charts, paper, live).
 
-**The falsification suite is now built** (§3d). What is *not* built from
-`BACKTEST_PROTOCOL.md` §6 is **§6.5's ablation matrix**, which is the natural next piece.
-Every arm's result is still meaningless on a fixture whose true effect is zero by
-construction — but building it was not, which is the point of §3d.
+**All of `BACKTEST_PROTOCOL.md` §6 is now built** — §6.1/§6.2 as `sweep_study.py` and
+`marginal_value.py`, §6.3/§6.4 as the falsification suite (§3d), §6.5 as the ablation
+matrix (§3e). Every *result* in them is still meaningless on a fixture whose true effect
+is zero by construction; what the two most recent ones produced instead were findings
+about the protocol's own acceptance criterion and about which components exist at all.
 
 ---
 
@@ -277,6 +280,79 @@ D-016 §1 and belong in the pre-registration, before real bars.
 
 ---
 
+## 3e. The ablation matrix, and the components that cannot be toggled
+
+`reports/ablation.md`. Section 6.5 names **nineteen** components to toggle one at a time.
+The matrix's real output is how many of them can be toggled at all, because that answer
+does not depend on the fixture:
+
+| Status | Meaning | Count |
+|---|---|---|
+| `PAIRED` | Same `Market`, only `run()` differs; compared setup by setup | 21 variants |
+| `UNPAIRED` | The toggle changes the pipeline, so the Market is rebuilt | 13 variants |
+| `BLOCKED` | Specified, engine unbuilt (Phases 2-4) | 2 rows |
+| `ABSENT` | Named in 6.5, **exists nowhere in the codebase** | 3 rows |
+
+**Every default stands.** One row of 34 excluded zero (`sl.model = S3`, p = 0.004) and
+Benjamini-Hochberg took it to q = 0.153, which does not survive q = 0.10. Its gross delta
+agrees in sign, so it is not D-016's cost confound — it is one try out of 34, which is
+what §5.6 exists to catch.
+
+### Four things that are true whatever data arrives
+
+1. **`session filter`, `killzone filter` and `liq.tier_confirmation_tf` are not
+   implemented.** The third is the one §6.5 calls **"the D-002 counterfactual"** — the
+   alternative to the decision that makes this a session-to-session swing model (§5). It
+   is declared in the schema, marked ABLATION, and read by no module. **D-002 cannot
+   currently be tested against its own alternative.** A test greps the package so
+   implementing any of the three fails rather than leaving the matrix claiming ABSENT.
+2. **`ob.definition` was hardcoded to OB-A in the engine** (`definition=` a literal), so
+   the four SPEC 13.2 variants were unreachable end to end and Phase 11's bake-off had no
+   counterpart in `run()`. Fixed, default byte-identical. **Still inert at the shipped
+   defaults**: entry model C reads an FVG and stop S1 reads the sweep extreme, so neither
+   consumes an order block. Only entry D or SL S3 makes it observable.
+3. **A fifth default that cannot fire.** D-014 recorded four; `tp.min_target_rank = 2.0`
+   is a fifth — **T2 arms on zero setups**, `NO_TARGET_AVAILABLE` on every one. T2 is the
+   only target model that aims at a liquidity level, the one place the thesis about where
+   price is *going* enters the exit. With T3 (D-014 item 4) also dead, §6.5's "each TP
+   model" row reduces to T1 vs T4.
+4. **"One component at a time" is not achievable where components share objects.**
+   `disp.mode = bar` fills 2 trades because `leg` mode confirms displacement *by finding
+   an FVG* and entry model C enters on that FVG — so the row measures the entry model.
+   Same for `require_fvg`, and for the OB rows. All three need a second axis. D-016 §2 is
+   the same shape: the shipped default is the awkward one to measure against, twice now.
+
+### INERT is not "no measurable effect"
+
+§6.5's rule — *"a CI spanning zero is 'no measurable effect' and its default stands"* — is
+followed literally, and it cannot distinguish the two things that produce a delta of
+0.0000. **7 of 34 variants changed the outcome of zero setups.** For those the sentence
+says the component was tested and did not matter, when it was never reached. The time stop
+is the clearest: **15, 30, 60 and off are all the same run**, because no trade lives long
+enough for any horizon to bind.
+
+So the matrix reports `INERT` and `NO_TRADES` as statuses **outranking any verdict**, with
+no delta and no CI. This is D-014 §8 / D-016 §5's "a guard nothing reaches" one level out:
+there a rule no test exercised, here a rule no *data* exercises.
+
+### Two more worth carrying
+
+- **Median MDE is 0.076 R paired against 0.181 R unpaired, a factor of 2.4.** An unpaired delta cannot
+  separate *changed outcomes* from *changed what we traded* — a filter removing half the
+  setups shifts expectancy by selecting a population, and reading that as its value is how
+  a filter that only reduced sample size gets recorded as one that improved the edge.
+- **`sweep.max_penetration_atr` rejects 460 sweeps at its default and moves 3 setups.**
+  Raising it to 2.0 admits 66 more confirmed sweeps and 3 more setups; above 2.0 nothing
+  changes at all. Its rejections reappear as `ACCEPTED_THROUGH` as it loosens (156 → 700
+  → 1,015), the near-substitution SPEC 9.2 warns about. *"This filter does nothing"* and
+  *"this filter changes nothing"* are different statements, and a one-at-a-time delta
+  reports only the second. Likewise `disp.min_leg_atr = 0` admits **nothing**, so
+  `require_fvg` and `min_body_ratio` already imply the threshold — which makes
+  `min_leg_atr`, a TUNABLE carrying §5.5's plateau requirement, unmeasurable
+  one-at-a-time.
+
+---
+
 ## 4. Module map
 
 ```
@@ -293,10 +369,12 @@ bot/research/   stats.py (shared primitives), sweep_study.py (H2),
                 displacement_study.py (SPEC 10.6), funnel.py (SPEC 11.7),
                 marginal_value.py (H5), fvg_study.py (SPEC 12.6),
                 ob_study.py (SPEC 13.8), risk_study.py (SPEC 18.9),
-                falsification.py (protocol 6.3/6.4 -- the five controls)
+                falsification.py (protocol 6.3/6.4 -- the five controls),
+                ablation.py (protocol 6.5 -- the matrix)
 scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11,12,13,14}_report.py,
-                marginal_value_report.py, falsification_report.py, regen_golden.py
-tests/          608 tests + tests/golden/structure_h4.json
+                marginal_value_report.py, falsification_report.py,
+                ablation_report.py, regen_golden.py
+tests/          633 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -319,7 +397,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-016 record corrections and findings from each phase's implementation.
+D-004 through D-017 record corrections and findings from each phase's implementation.
 
 ---
 
@@ -382,6 +460,12 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 51 | **`choch_only` is not `structure.py`'s CHOCH events.** A trend flip through the *protected* level is stricter and different from SPEC 11.2's break of the *last unbroken swing*. Build it on `MssEngine._major_reference`, and never check it by counting — the two counts cross between fixtures (D-016 §3). |
 | 52 | **A control substitutes a setup stream (`Market.setup_override`) or a level book (`analyse_sweeps(level_transform=...)`), never a second engine.** An arm that re-stated the admission order or the fill discipline could differ from the baseline for a reason that is not under test, and nothing in its output would show it (D-016 §4). |
 | 53 | **`Trade.setup_id` is the sweep id**, so two setups sharing one are scored as a trade plus a phantom 0.0 *and* collide in `run`'s `live` dict. The sweepless arms mint their own ids and must key on the trigger bar (D-016 §5). |
+| 54 | **A delta of exactly 0.0000 is two different findings.** INERT (the toggle changed no trade) is not "no measurable effect" (it fired and did not matter), and §6.5's rule cannot tell them apart. 7 of 34 ablation variants are inert; the time stop is identical at 15, 30, 60 and off (D-017 §4). |
+| 55 | **Three §6.5 components are not implemented**: session filter, killzone filter, and `liq.tier_confirmation_tf` — the last being §6.5's own named **D-002 counterfactual**, declared ABLATION and read by nothing (D-017 §1). |
+| 56 | **The block length is a calendar span, not an observation count.** §5.3 says ~20 trading days, and arms differ in trade density, so each gets its own (D-017 §7). |
+| 57 | **A paired ablation uses a sign-flip permutation, never the pooled two-sample test**, which discards the pairing — the power it was for. Median MDE 0.076 R paired against 0.181 R unpaired (D-017 §6/§7). |
+| 58 | **`ob.definition` reaches the engine only via `cfg`; it was a hardcoded literal for four phases**, so OB-B/C/D had never run end to end. Fixed, and still inert at the shipped defaults because entry C and stop S1 consume no order block (D-017 §2). |
+| 59 | **`tp.min_target_rank = 2.0` makes T2 arm nothing** — a fifth default that cannot fire, on top of D-014's four, and the only target model that aims at a liquidity level (D-017 §3). |
 
 ---
 
@@ -445,8 +529,16 @@ mistake, and every one of them is now pinned by tests.
   reaches through the front door needs a test that goes in the side door**, and if it has a
   configuration where it does fire, that configuration is the side door.
 
+- **The ablation matrix:** the mutation discipline caught its own tests being thin.
+  Nine of the first nineteen mutations survived, and six were one gap — the tests
+  exercised `stats` directly and nothing checked that `evaluate` *called* the block
+  bootstrap or the paired test, so swapping either for its weaker sibling changed only
+  numbers no test asserted on. Fixed with spies on the wiring. **Testing a primitive is
+  not testing that the caller uses it.**
+
 **A statistic not compared against what noise alone would produce is not a finding.**
-**And a statistic compared in a unit the two arms do not share is not one either.**
+**A statistic compared in a unit the two arms do not share is not one either.**
+**And a delta of zero is not a finding until you know whether the thing ever fired.**
 
 Every study module carries a **positive control** as well as a null result. A study that
 can only ever say "no edge" would pass the random-walk fixture and be worthless.
@@ -512,6 +604,13 @@ no participants and no structure, so:
   before it says anything else. What the run does establish is the instrument, plus one
   finding about the *acceptance criterion* that is independent of the data (§3d).
 
+- **The ablation matrix splits the same three ways Phase 13 did**, and the split is
+  worth keeping in mind when reading it. *Structural*: the five components that cannot be
+  toggled, the OB wiring, the component coupling — true on any data. *Arithmetic*: T2 and
+  T3 arming nothing. *Measurements*: every delta, every CI, and every INERT row — real
+  bars trend, so trades last longer and the time stop, break-even and trailing may all
+  start to bite.
+
 `bot/data/synthetic.py` says so in its own docstring and is never used to produce a
 strategy result.
 
@@ -525,11 +624,13 @@ and one of its findings is that part of it may not be answerable on real data ei
 (§3a). So the design stands and the next phases are the ones that turn an event into a
 trade.
 
-### The falsification suite is built; §6.5's ablation matrix is what remains
+### The whole of `BACKTEST_PROTOCOL.md` §6 is built
 
-`BACKTEST_PROTOCOL.md` §6.3 and §6.4 are done (§3d, D-016). All five arms run through the
-unmodified `run()`, 30 tests and 18/18 mutations pin them, and `scripts/falsification_report.py`
-writes `reports/falsification.md` in about eleven minutes.
+§6.1 and §6.2 were already `sweep_study.py` and `marginal_value.py`. §6.3 and §6.4 are the
+falsification suite (§3d, D-016) — five arms through the unmodified `run()`, 30 tests,
+18/18 mutations. §6.5 is the ablation matrix (§3e, D-017) — 34 variants over 19
+components, 25 tests. Neither produced an interpretable verdict, and neither was expected
+to; both produced findings about the protocol and the codebase instead.
 
 | Control | Tests | What a null verdict would mean |
 |---|---|---|
@@ -544,15 +645,15 @@ every arm's true effect is zero by construction, so a null is the fixture speaki
 run establishes is that the instrument works — and, unexpectedly, that **§10.1's acceptance
 row does not**, in a way that has nothing to do with the data (§3d).
 
-**§6.5's ablation matrix is now the largest unbuilt piece of the protocol**: one component
-toggled at a time against the baseline, each a delta with a block-bootstrap CI. It shares
-this suite's comparison machinery (`falsification.compare`, the declared margin, the
-three-way verdict) and inherits D-016 §1 directly — **every ablation that changes the stop
-distance is cost-confounded the same way**, and there are several (each SL model, the entry
-models, `disp.max_leg_bars`).
+**§6.5's ablation matrix is built too** (§3e, D-017). It shares this suite's comparison
+machinery — `falsification.Arm`, the declared margin, the three-way verdict — and inherits
+D-016 §1 directly, reporting every row in both currencies.
 
-Everything else in the protocol that remains — walk-forward (§8), the OOS budget ledger
-(§7), the pre-registration (§1) — is a procedure over real splits and cannot start earlier.
+**Everything in `BACKTEST_PROTOCOL.md` §6 is now built.** What remains in the protocol —
+walk-forward (§8), the OOS budget ledger (§7), the pre-registration (§1), and §5.5's
+plateau requirement — is a procedure over real splits and cannot start earlier. §5.5 is
+worth naming: a plateau needs a metric that varies meaningfully across a TUNABLE grid, and
+on a random walk it varies only by noise, so it has never been run at all.
 
 ### Still blocking real results
 
@@ -599,7 +700,11 @@ studies are built, and none of their numbers mean anything about markets yet.
    decides whether the project has demonstrated what it claims. Everything before it can
    pass while this fails. **Read the gross-R table before the net-R one** (D-016 §1), and
    settle which of the two §10.1 is to be judged in *before* running it, not after.
-8. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
+8. **`scripts/ablation_report.py`** — and read the INERT column first. Seven variants
+   change nothing on this fixture and most of them are candidates to come alive on real
+   bars: the time stop, break-even and trailing all depend on trades lasting longer than
+   a random walk's do.
+9. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
    TUNABLE/ABLATION split.
 
 ### Before the first real backtest

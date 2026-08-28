@@ -67,7 +67,7 @@ from bot.core.fvg import Fvg, detect_fvgs
 from bot.core.indicators import atr_ref
 from bot.core.liquidity import Side
 from bot.core.mss import MssResult, SetupCandidate, analyse_mss
-from bot.core.order_blocks import ObDefinition, propose
+from bot.core.order_blocks import propose
 from bot.core.risk import OpenPosition, RiskLedger
 from bot.core.sessions import build_sessions
 from bot.core.stops import StopModel, symbol_spec
@@ -434,7 +434,12 @@ def _pass_one(
         ob = propose(
             market.h4, cfg, direction=c.direction, sweep_extreme_bar=c.sweep_extreme_bar,
             leg_start=a_bar, break_bar=b, reference_price=c.reference_price,
-            displacement_confirmed=True, definition=ObDefinition.A_LAST_OPPOSING,
+            # ``cfg.ob.definition``, NOT a literal.  This was pinned to OB-A, which made
+            # the four SPEC 13.2 variants -- a documented ABLATION, and the whole subject
+            # of Phase 11's bake-off -- unreachable through the engine: setting the
+            # parameter changed nothing and no run ever used B, C or D end to end.
+            # ``propose`` reads the config when handed None.  See D-017.
+            displacement_confirmed=True, definition=None,
             swings=market.structure.swings.swings, atr=market.atr, seq=i,
         )
         armed = arm(

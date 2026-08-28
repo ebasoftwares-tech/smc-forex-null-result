@@ -2038,3 +2038,177 @@ genuine SMC edge — injecting drift after each MSS changes the prices, which ch
 sweeps, which changes the MSS set. Recorded as a limitation rather than solved.
 
 Section 6.5's ablation matrix remains unbuilt and is the natural next piece.
+
+---
+
+## D-017 — The ablation matrix, and five components that cannot be toggled
+
+| | |
+|---|---|
+| **Date** | 2026-08-28 |
+| **Status** | ACTIVE |
+| **Trigger** | Building `BACKTEST_PROTOCOL.md` section 6.5 (`bot/research/ablation.py`, `scripts/ablation_report.py`) |
+
+Section 6.5 names **nineteen** components to toggle one at a time. The matrix's first
+output is an accounting of how many of them can be toggled at all, and it is the part that
+does not depend on the fixture:
+
+| Status | Meaning | Count |
+|---|---|---|
+| `PAIRED` | Same `Market`, only `run()` differs; compared setup by setup | 21 variants |
+| `UNPAIRED` | The toggle changes the pipeline, so the Market is rebuilt and the populations differ | 13 variants |
+| `BLOCKED` | Specified, but its engine is unbuilt (Phases 2-4) | 2 rows |
+| `ABSENT` | Named in 6.5 and **exists nowhere in the codebase** | 3 rows |
+
+### 1. Three components named by section 6.5 are not implemented
+
+**`session filter` and `killzone filter`.** `SessionWindowConfig.role` admits `"killzone"`
+and `defaults.yaml` defines LONDON_KZ and NY_KZ with `enabled: false`, but the only code
+that reads `role` is `liquidity_session_names`, which selects liquidity *sources*. **No
+module gates an entry on the session it fires in.** Enabling the killzone windows would add
+two more session windows, not a filter.
+
+**`liq.tier_confirmation_tf`** is the serious one. Section 6.5 names its `{'3': 'H1'}` value
+**"the D-002 counterfactual"** — the alternative to the decision that makes this a
+session-to-session swing model rather than the intraday one the SMC source material
+describes (`STATE.md` §5). The field is declared in the schema, documented as ABLATION, and
+**read by no module**: `analyse_sweeps` steps the H4 series for every tier by construction.
+**D-002 cannot currently be tested against its own alternative.**
+
+Pinned by a test that greps the package, so implementing any of the three fails the test
+rather than silently leaving the matrix claiming ABSENT.
+
+### 2. `ob.definition` was hardcoded in the engine, and is inert even once fixed
+
+`_pass_one` passed `definition=ObDefinition.A_LAST_OPPOSING` as a **literal**, so
+`cfg.ob.definition` was ignored: the four SPEC 13.2 variants — a documented ABLATION and the
+entire subject of Phase 11's bake-off — were unreachable through the engine. Setting the
+parameter changed nothing, and no run had ever used B, C or D end to end.
+
+Fixed by passing `None`, which `propose` resolves from the config. **The default is
+byte-identical** (a test asserts it), and the four now produce visibly different results —
+at entry model D, 19/15/12/2 trades on one fixture year.
+
+At the **shipped defaults they remain inert**, because entry model C reads an FVG and stop
+model S1 reads the sweep extreme: neither consumes an order block. So SPEC 13.8's
+requirement to report the agreement matrix alongside performance still cannot be exercised
+from the default config, and Phase 11's `M_eff = 1.77` has no end-to-end counterpart.
+
+### 3. A fifth default that cannot fire — and it is the one with a thesis in it
+
+D-014 recorded four. **`tp.min_target_rank = 2.0` is a fifth**: T2 arms on **zero** setups,
+`NO_TARGET_AVAILABLE` on every one, because no opposing liquidity level ever reaches rank
+2.0. T3 also arms nothing, for the reason D-014 item 4 already gave.
+
+T2 is the more consequential of the two. T3 is a ladder whose first rung is set below the RR
+gate — an arithmetic mismatch between two parameters. T2 is **the only target model that
+aims at a liquidity level**, which is the one place the strategy's own thesis about where
+price is *going* would enter the exit rather than the entry. It has never produced a trade.
+
+**Two of the four TP models therefore cannot be ablated at the shipped defaults**, so
+section 6.5's "each TP model" row reduces to T1 vs T4.
+
+### 4. INERT is not "no measurable effect", and section 6.5's rule cannot tell them apart
+
+Section 6.5's decision rule is *"a component whose delta CI spans zero is reported as 'no
+measurable effect' and its default stands"*. It is conservative in the right direction and
+is followed literally. But **7 of 34 runnable variants changed the outcome of zero setups**,
+and for those the sentence is wrong: it says the component was tested and did not matter,
+when the component was never reached. Identical numbers, opposite conclusions.
+
+The clearest case is the time stop: **`max_bars_in_trade` at 15, 30, 60 and off are all the
+same run**, because no trade in the fixture lives long enough for any horizon to bind. A
+reader given only "no measurable effect" would conclude the time stop is decoration; the
+data says it was never reached. Break-even at 1.5R and structure trailing are the same —
+neither trigger is ever hit.
+
+So the matrix reports `INERT` (the toggle changed nothing) and `NO_TRADES` (the variant
+armed nothing) as their own statuses, **outranking any statistical verdict**, and gives them
+no delta and no CI. This is D-014 §8 and D-016 §5's "a guard nothing reaches" one level
+out: there it was a rule no test exercised, here it is a rule no *data* exercises, and the
+report is where it has to be visible.
+
+### 5. "One component at a time" is not achievable where components share objects
+
+Section 6.5's method assumes a component can be toggled in isolation. Three of its rows
+cannot be, because the default entry model consumes something another component produces:
+
+| Toggle | Coupled to | What happens |
+|---|---|---|
+| `disp.mode = bar` | `entry.model = C` | `leg` mode confirms displacement *by finding an FVG* (`require_fvg`), so model C always has one. `bar` mode (SPEC 10.3) produces none: **113 of 145 setups reject with `NO_FVG_AVAILABLE`** and the arm fills 2 trades. The row measures the entry model, not the displacement mode |
+| `disp.require_fvg = False` | `entry.model = C` | The same mechanism from the other side: nearly doubles the setup count, fills the same number of trades |
+| `ob.definition = B/C/D` | `entry.model = C`, `sl.model = S1` | Neither default consumes an order block, so all three are INERT |
+
+All three need a second axis to be read at all. **A one-at-a-time matrix cannot express
+that**, and reporting these rows as though it could would attribute the entry model's
+dependency to the component being toggled. Same shape as D-016 §2, where two falsification
+controls could not run at the default entry model either — the second time the shipped
+default has turned out to be the awkward one to measure against.
+
+### 6. Paired and unpaired are different measurements, and the gap is large
+
+A `PAIRED` row runs two configurations over one setup stream and takes the difference per
+setup, so what is bootstrapped is the variance of a *difference* and most market noise
+cancels. An `UNPAIRED` row rebuilds the Market, so the arms are different populations and
+all of that noise is back. On the fixture the median MDE is **0.076 R paired against
+0.181 R unpaired — a factor of 2.4**.
+
+It is not presentational. **An unpaired delta cannot separate "this component changed
+outcomes" from "this component changed what we traded"** — a sweep filter removing half the
+setups shifts expectancy by selecting a different population, and reading that as the
+filter's value is how a filter that only reduced sample size gets recorded as one that
+improved the edge.
+
+### 6a. Two filters that are very active and change almost nothing
+
+**`sweep.max_penetration_atr`**, over the three fixture years:
+
+| cap | confirmed sweeps | setups | `OVER_PENETRATION` | `ACCEPTED_THROUGH` |
+|---:|---:|---:|---:|---:|
+| 0.5 | 1,713 | 127 | 1,722 | 156 |
+| **1.0 (default)** | **2,298** | **165** | **460** | **700** |
+| 2.0 | 2,364 | 168 | 5 | 1,015 |
+| 10.0 | 2,364 | 168 | 0 | 1,017 |
+
+At its default the cap rejects **460** sweeps. Raising it to 2.0 admits 66 more confirmed
+sweeps and **three** more setups; above 2.0 nothing changes at all. So the filter is very
+active at the sweep level and almost irrelevant at the setup level, because the sweeps it
+admits are removed downstream — and because its rejections *reappear* as
+`ACCEPTED_THROUGH` as it loosens (156 → 700 → 1,015), which is the near-substitution
+SPEC 9.2 warns about in as many words.
+
+**"This filter does nothing" and "this filter changes nothing" are different statements**,
+and a one-at-a-time delta reports only the second. On the half-year fixture the tests use,
+the 2.0 arm is byte-identical to the baseline; over three years it moves three setups.
+
+**`disp.min_leg_atr = 0` admits nothing at all**, so `require_fvg` and `min_body_ratio`
+already imply the magnitude threshold. SPEC 10.6 calls them partially redundant and ablates
+them jointly for that reason; here the redundancy is total, which means `min_leg_atr` — a
+TUNABLE carrying section 5.5's plateau requirement — is unmeasurable one-at-a-time.
+
+### 7. Statistics
+
+Section 6.5 requires a **block-bootstrap** CI, which `stats.py` had only for the one-sample
+case. `bootstrap_diff_ci` gained `block_a`/`block_b`, and the stationary walk was extracted
+to `_stationary_indices` so both share one implementation.
+
+**The block length is derived from the calendar, not from an observation count.** Section
+5.3 states it as *"mean block length ~ 20 trading days"*, and the arms do not share a trade
+density: an arm producing four times as many setups over the same calendar needs four times
+the block length to span the same twenty days. A single fixed count would resample one arm
+over a materially different horizon from the other.
+
+Paired rows use a **sign-flip** permutation test and the difference-series MDE, not the
+pooled two-sample versions. The pooled test's null is *"these two samples came from one
+distribution"*, which discards the pairing — precisely the power the pairing exists for.
+
+### 8. The one measurable row, and what killed it
+
+`sl.model = S3` reports a delta of +0.078 R with a CI of [0.007, 0.173] and **p = 0.004** —
+the only one of 34 rows to exclude zero, on a random walk. **Benjamini-Hochberg at q = 0.10
+takes it to q = 0.153 and it does not survive.** Its gross delta agrees in sign and size, so
+it is not D-016 §1's cost confound; it is one try out of 34.
+
+This is the project's recurring statistical lesson arriving where it was designed to be
+caught rather than where it was designed to be missed: Phase 7 saw 3 of 20 tests fire on a
+random walk, and section 5.6's correction exists for exactly this. **Every default stands.**

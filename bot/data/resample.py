@@ -158,6 +158,61 @@ def _bucket_bounds(
 # ------------------------------------------------------------------- Sunday stub
 
 
+def _merge_rump_stubs(
+    t: np.ndarray,
+    new_start: np.ndarray,
+    new_end: np.ndarray,
+    merged: np.ndarray,
+    cfg: AppConfig,
+    source_step: int,
+) -> None:
+    """Merge forward a stub the per-week pass cannot see.  Mutates in place.
+
+    **A calendar day can belong to two trading weeks, and the per-week pass treats the
+    two halves differently.**  ``week.open_time`` is a fixed 21:00 UTC, but the FX week
+    actually opens at 17:00 *New York*, which is 21:00 UTC only while New York and London
+    agree about daylight saving.  In a desync week -- the fortnight each spring and the
+    week each autumn when the US has switched and the EU has not -- the session opens an
+    hour earlier, so real data carries bars *before* the configured week boundary.
+
+    Those bars are assigned to the **previous** week, so ``_merge_week_stub`` sees them as
+    that week's last bucket rather than this week's first, and leaves them behind when it
+    merges the rest of the Sunday into Monday.  The result is a rump Sunday bucket holding
+    an hour of bars whose grid end (Monday 00:00) runs past the merged Monday bucket's
+    back-dated open (Sunday 21:00) -- overlapping bars, which ``BarSeries`` rejects
+    outright.  On 2019-2025 EURUSD that is 23 boundaries, every one a DST-desync Sunday.
+
+    The fix keeps D-001a's rule and applies it to the day rather than to the week-
+    assignment of individual bars: **a stub merges forward**.  The coverage guard is the
+    same one the per-week pass uses, so a short *trading* day -- a holiday Monday -- is
+    still never merged.
+    """
+    if cfg.tf.sunday_handling != "merge_into_monday":
+        return
+    for _ in range(4):  # cascades are possible in principle; bounded rather than while
+        starts = _group_starts(new_start)
+        bs, be, first = new_start[starts], new_end[starts], t[starts]
+        counts = np.diff(np.append(starts, len(t))).astype(np.int64)
+        # The overlap condition itself: this bucket's grid end runs past the next
+        # bucket's first observed bar, which is what `open_time` back-dates to.
+        bad = np.where(be[:-1] > first[1:])[0]
+        if bad.size == 0:
+            return
+        fixed = False
+        for i in bad:
+            expected = max(1, int(be[i] - bs[i]) // source_step)
+            if counts[i] / expected >= cfg.tf.stub_merge_threshold:
+                continue  # a real trading day, however thin -- leave it alone
+            sel = new_start == bs[i]
+            new_start[sel] = bs[i + 1]
+            new_end[sel] = be[i + 1]
+            merged[sel] = True
+            merged[new_start == bs[i + 1]] = True
+            fixed = True
+        if not fixed:
+            return
+
+
 def _merge_week_stub(
     t: np.ndarray,
     bucket_start: np.ndarray,
@@ -203,6 +258,8 @@ def _merge_week_stub(
         new_end[is_first] = target_end
         merged[is_first] = True
         merged[sel & (bucket_start == target_b)] = True
+
+    _merge_rump_stubs(t, new_start, new_end, merged, cfg, source_step)
 
     return new_start, new_end, merged
 

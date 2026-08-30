@@ -61,7 +61,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, run out of order) | `reports/marginal_value.md` | 8/8 — instrument validated, **H5 open** |
 | 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 **on real bars** — **EQUIVALENT: no standalone FVG edge**, the project's first meaningful null, see D-023 |
 | 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 **on real bars** — four variants are worth **1.68 tests**, see D-022 |
-| 12 | Entry engine — five models, fill resolution against M1 | `reports/phase12_gate.md` | 8/8 — a "conservative" fill default that was neither, see D-013 |
+| 12 | Entry engine — five models, fill resolution against M1 | `reports/phase12_gate.md` | 8/8 **on real bars, real M1** — the lookahead has a magnitude and two predictions failed, see D-025 |
 | 13 | Risk — stops S1–S4, the RR gate, sizing, limits | `reports/phase13_gate.md` | 8/8 — **four defaults that cannot fire**, see D-014 |
 | 14 | Backtest engine — exits, costs, metrics, Monte Carlo | `reports/phase14_gate.md` | 10/10 — **four free lunches found and closed**, see D-015 |
 | — | **The falsification suite**: shuffled liquidity, sweep-only, CHoCH-only, reversed-order, random-time (protocol 6.3/6.4) | `reports/falsification.md` | Built and validated — **and section 10.1's own acceptance row turns out to be satisfiable by stop width**, see D-016 |
@@ -436,7 +436,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-024 record corrections and findings from each phase's implementation.
+D-004 through D-025 record corrections and findings from each phase's implementation.
 **D-020 is the one to read first**: it is the only entry written against real bars, and
 it is the one that turned Phase 9's PASS into a FAIL.
 
@@ -526,6 +526,9 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 76 | **H5 is answered at h=1 and h=4 and unanswerable at h=12** — EQUIVALENT on both short horizons over 326 MSS events, so displacement filtering does not separate MSS from CHoCH-not-MSS forward returns by as much as 0.25 ATR. The pooled verdict reads UNDERPOWERED because it takes the weakest horizon, which is correct and hides the answer; read the per-horizon table (D-024). |
 | 77 | **Widening H5's 0.25 ATR margin is closed, permanently.** It was listed as a live option *before* the data with the note that it would be an indefensible reaction afterwards. The data has been seen. Anyone reaching for 0.5 ATR to make h=12 answerable is doing the thing §10.2 prohibits (D-024 §4). |
 | 78 | **Three studies now say the same thing about the development set: it answers nothing.** Phase 9's gate failed on it (97 MSS vs 120), the OB study cannot resolve any horizon on it (135 touches vs 155), and H5 cannot either (88 MSS vs 93). Every one of those pooled counterparts passes. Iterating on three symbols is the design decision this keeps colliding with (D-020, D-022 §3, D-024 §3). |
+| 79 | **`cancel_if` clause 2 is NOT a fixture artefact, and it decides the entry bake-off by itself.** The synthetic report predicted the sweep rate behind it was one *"no real market sustains"*; real bars give **0.44 confirmed sweeps per H4 bar against 0.47** on the fixture. Limit fill rates run 6-10% with the clause against 30-46% without it. A FROZEN clause discarding ~90% of every limit model's population is not a background condition (D-025 §3). |
+| 80 | **SPEC 15.3's lookahead is worth 0.0156 ATR per entry on real bars**, from 43,360 non-zero close-to-open gaps in 64,228 transitions. Small against the spec's *"10-30% of headline return"* but taken on **every** trade, and exactly 0.0000 on the fixture. The rule is now demonstrable, not just load-bearing (D-025 §2). |
+| 81 | **The gap-past-the-stop branch stays unexercised even on real data** — 0 firings over 40 symbol-years. Real H4 gaps are ~0.005 ATR median against a stop 1-2 ATR away. Unlike Phase 10's `INVALIDATED`, moving to real data did **not** bring this guard alive, and that is not grounds to remove it: the gap that clears a stop is precisely the tail event it exists for (D-025 §4). |
 
 ---
 
@@ -620,11 +623,12 @@ caught it. Four mutations were run against the new suite and all four are now ca
 
 ## 8. The honest limitation
 
-**Most numbers in this file still come from a synthetic random walk.** Real bars landed
-on 2026-08-30; **Phase 9** (§3, D-020), **Phase 10** (D-023), **Phase 11** (D-022) and
-**the H5 study** (§3a, D-024) have been re-run on them, and every other report below is
-still the fixture until it is re-run too. The fixture has no liquidity, no participants
-and no structure, so:
+**Some numbers in this file still come from a synthetic random walk.** Real bars landed
+on 2026-08-30; **Phase 9** (§3, D-020), **Phase 10** (D-023), **Phase 11** (D-022),
+**Phase 12** (D-025) and **the H5 study** (§3a, D-024) have been re-run on them. What is
+left on the fixture is **Phase 13, Phase 14, the falsification suite and the ablation
+matrix** — the four that produce performance numbers. The fixture has no liquidity, no
+participants and no structure, so:
 
 - Sweep counts, rates, distributions, rejection rates and now the MSS funnel are
   properties of *the detectors meeting noise*. They prove the engines are deterministic,
@@ -663,12 +667,13 @@ and no structure, so:
   the market is not real. What the phase establishes is that the chain runs end to end,
   that R is computed in a pass which structurally cannot see equity, and that the two
   tests SPEC 25.2/25.3 name are green.
-- **The fixture now fails to show a *third* execution effect.** It is perfectly continuous,
-  so SPEC 15.3's lookahead (Phase 12), the S4 stop's movement at fill (Phase 13) and now
-  **SPEC 17.5's intrabar stop-versus-target ambiguity — the protocol's "single largest
-  backtest bias" — all measure exactly 0.0000 here**, the last of them because a bar
-  spanning both a 1R stop and a 2R target needs a range of ~4.4 ATR. All three are pinned
-  by constructed tests and all three are first in line on real bars.
+- **Of the three execution effects the fixture measured as exactly 0.0000, real bars
+  moved one.** SPEC 15.3's lookahead is now **0.0156 ATR per entry** (D-025). The
+  gap-past-the-stop branch is still 0 — real H4 close-to-open gaps run ~0.005 ATR
+  against a stop 1-2 ATR away, so the discontinuity needed is two orders of magnitude
+  larger than the typical one. The S4 stop's movement at fill (Phase 13) and SPEC
+  17.5's intrabar ambiguity (Phase 14) are **still unmeasured** — those reports have
+  not been re-run. All remain pinned by constructed tests.
 
 - **The falsification suite's five arms are the sharpest case in the project.** Their
   whole purpose is to answer "does this component contribute?", and this fixture answers
@@ -765,11 +770,11 @@ arithmetic assumed.
    **BOTH DONE, 2026-08-30 (D-023, D-024).** No standalone FVG edge (EQUIVALENT at
    every horizon, 7,800 touches); H5 EQUIVALENT at h=1 and h=4, UNDERPOWERED at h=12.
    Two of the project's component hypotheses now have real-data answers.
-4. **`scripts/phase12_report.py`** — the two things the continuous fixture cannot show:
-   SPEC 15.3's lookahead (worth 10–30% of headline return per the spec, and exactly
-   0.0000 ATR here) and the gap-past-the-stop branch. Both are pure gap effects. The S4
-   stop's movement between arming and filling (D-014 §4) is a third, and measures 0.0000
-   here for the same reason.
+4. ~~**`scripts/phase12_report.py`**~~ — **DONE, 2026-08-30 (D-025).** SPEC 15.3's
+   lookahead measures **0.0156 ATR per entry** (was exactly 0.0000). The
+   gap-past-the-stop branch **still fires zero times** — real H4 gaps are ~0.005 ATR
+   against a 1-2 ATR stop — so that prediction failed. So did the claim that the
+   opposing-sweep cancel was a fixture artefact.
 5. **`scripts/phase13_report.py`** — recompute `M_eff` for the stop models, and settle the
    three questions the fixture's 17.4-pip ATR cannot: whether real ATR clears S4's 40-pip
    ceiling, which of the two upper stop caps actually binds, and what the minimum viable

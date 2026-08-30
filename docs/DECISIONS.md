@@ -3119,3 +3119,108 @@ rows were symbols, with the prose beneath it reading *"the sign flips between ye
 The rule earned its keep on the first script it was applied to. This one had the most
 fixture-shaped prose in the project, because its entire framing was "instrument validated,
 H5 open pending real data" — a sentence that becomes false the moment the data arrives.
+---
+
+## D-025 — Phase 12 on real bars: one effect appeared, two predictions failed
+
+| | |
+|---|---|
+| **Date** | 2026-08-30 |
+| **Decided by** | Elie (instruction: *"run phase12_report on the real data"*) |
+| **Status** | ACTIVE |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample, H4 **with the vendor's real M1** |
+| **Report** | `reports/phase12_gate.md` — 8/8 checks PASS; fixture retained at `reports/phase12_gate_synthetic.md` |
+
+### 1. The gate's second half is now a real check, and it passes
+
+*"Fill logic verified against M1"* meant something weaker on the fixture: the M1 path was
+generated and the H4 bars resampled from it, so the two agreed **by construction**. This run
+uses HistData's own M1 — 1.45M bars per symbol — and the bar-level rule still agrees with the
+M1 replay on **0 disagreements over 7,877 armed orders**.
+
+That is the first time the phase's own gate has been tested rather than asserted.
+
+### 2. SPEC 15.3's lookahead has a magnitude for the first time
+
+| | fixture | real bars |
+|---|---:|---:|
+| non-zero close-to-open gaps | **0** of 4,859 | **43,360** of 64,228 (67.5%) |
+| mean gap over all transitions | 0.0000 ATR | **0.0156 ATR** |
+| median non-zero gap | — | 0.0049 ATR |
+| 95th percentile | — | 0.0353 ATR |
+| largest | — | 3.9978 ATR |
+
+Filling model A at the close that triggered it, rather than the next bar's open, gains
+exactly the close-to-open move. On the fixture that is 0.0000 by construction; here it is
+**0.0156 ATR on every entry**, free, in the direction the trade wants.
+
+Against a stop of 1-2 ATR that is a few percent of R per trade — **materially less than SPEC
+15.3's "10-30% of headline return"**, and worth recording as a number the spec over-states on
+this data rather than quietly adopting the spec's figure. But it accrues to *every* entry
+rather than to a tail, and it is unambiguously non-zero. The rule was load-bearing on data
+that could not demonstrate it; it is load-bearing and demonstrated now.
+
+### 3. The opposing-sweep cancel is not a fixture artefact — the prediction was wrong
+
+The synthetic report said this in as many words:
+
+> *"A random walk with up to 40 active liquidity levels produces sweeps at a rate no real
+> market sustains; the same clause on real bars will cost something quite different."*
+
+| | fixture | real bars |
+|---|---:|---:|
+| confirmed sweeps per H4 bar | 0.47 | **0.44** |
+| fill rate, limit models, **without** `cancel_if` 2 | 33-41% | **30-46%** |
+| fill rate, limit models, **with** it | 2-3% | **6-10%** |
+
+**The sweep rate is the same to within 7%.** The liquidity model produces roughly one
+confirmed sweep every two H4 bars on real FX majors, exactly as it did on noise, so the
+mechanism behind the cancel is not an artefact of the fixture. The damage is four to five
+times smaller and still severe.
+
+**This promotes `cancel_if` clause 2 from a fixture note to a live design question.** It is
+FROZEN and nothing was changed. But a clause that discards roughly nine of every ten limit
+orders is deciding the entry-model bake-off by itself, and SPEC 15.5's per-setup comparison
+cannot see past it — model A is untouched because a market order never waits, so the
+comparison is between one model at full population and four at a tenth of theirs. Both
+columns are reported so the effects stay separable.
+
+A second prediction failed quietly in the same table: the fixture's fill rates **did**
+transfer, 30-46% against 33-41% without the cancel, where the synthetic report expected real
+retracement behaviour to differ.
+
+### 4. The gap-past-the-stop branch is still dead, and that one is mine
+
+`STATE.md` §8 expected this branch to come alive on real bars, on the reasoning that it needs
+a price discontinuity and real data has them. It has them — 43,360 of them — and the branch
+fires **0 times over 40 symbol-years**.
+
+The arithmetic is the whole explanation: gapping *past a stop* needs a discontinuity 1-2 ATR
+wide, and the median non-zero gap is **0.0049 ATR**, two orders of magnitude smaller. The
+largest single gap in the sample is 3.9978 ATR, so it is not impossible — merely rare enough
+that four years across ten majors produced no instance where a gap also beat the entry price
+to the stop.
+
+**Unlike Phase 10's `INVALIDATED`, which did come alive (D-023 §2), this guard stays
+exercised only by constructed tests.** That is D-014 §8's "a guard nothing reaches" pattern
+surviving the move to real data. It is **not** grounds to remove it: the H4 gap that clears a
+stop is exactly the tail event the guard exists for, and a guard justified by tail events
+cannot be justified by their frequency.
+
+**This one is worth recording as a process failure as well as a result.** My first adaptation
+of this report printed *"Gap-past-the-stop cancels fire 0 times… They are live on real data"*
+— an assertion contradicted by the number in the same sentence. That is precisely the failure
+D-023 §5 recorded two commits earlier, this time in prose written *for* the real-data branch
+rather than inherited from the fixture. The rule needs strengthening: **it is not enough to
+grep for fixture language; every claim in a report that a thing now happens must be
+conditioned on the count of that thing.** Both branches are now written from `gap_bars`
+itself.
+
+### 5. What this does not establish
+
+**Anything about returns** — no trade is closed here and nothing is sized. **That M1 is the
+true intrabar path**: it is a sampling of the tape, within-minute order is unknown, and
+`backtest.intrabar_mode = m1_path` inherits that limit. Tick data would close it and no
+spread series exists yet at all. **That the fill rates generalise beyond these four
+in-sample years** — and their close agreement with the fixture deserves more scepticism than
+a confirmed prediction would, given two other predictions in the same report failed.

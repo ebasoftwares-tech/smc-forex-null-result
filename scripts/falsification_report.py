@@ -3,10 +3,11 @@
 Not a phase gate.  Like the H5 study before it, this is a study run out of the phase
 sequence and it writes ``reports/falsification.md`` rather than a ``phaseN_gate.md``.
 
-**Read "What this report does NOT establish" before any number in it.**  Every arm here
-asks whether a component contributes, and on a random walk the true contribution of every
-component is zero by construction -- including the real ones.  The nulls below are
-guaranteed by the fixture and are evidence about the instrument, not about the strategy.
+**Read "What this report does NOT establish" before any number in it.**  On real bars the
+arms below are evidence about the strategy: section 10.1's deciding row is evaluated here
+for the first time against data whose true effect is not zero by construction.  Under
+``--synthetic`` every arm is instead guaranteed to be null by the fixture, and a
+``DIFFERENT`` verdict there would mean a bug.
 
     python scripts/falsification_report.py              # real bars, data/parquet
     python scripts/falsification_report.py --synthetic  # the original fixture
@@ -271,21 +272,42 @@ def main() -> int:
     # -- the caveat, first
     w("## What this report does NOT establish")
     w("")
-    w("**Every arm below asks whether a component contributes, and this fixture answers")
-    w("*no* for all of them by construction.** `bot/data/synthetic.py` is a random walk")
-    w("with no participants and no liquidity, so the true contribution of liquidity")
-    w("identification, of the sweep, of the CHoCH and of their ordering is exactly zero.")
-    w("A null here is the fixture speaking, not the strategy.")
-    w("")
-    w("This matters more here than in any earlier study, because a falsification suite is")
-    w("the one place where *\"we found no difference\"* is the publishable answer -- and")
-    w("section 6.3 explicitly invites the reader to act on one: *\"rebuilt as a")
-    w("mean-reversion model and the SMC framing dropped\"*. **No such conclusion is")
-    w("licensed by anything below.**")
-    w("")
-    w("What the run does establish is that the suite is built, that every arm is driven by")
-    w("the same engine as the baseline, and that the comparison would report a difference")
-    w("if one existed (the positive control). That is instrument validation.")
+    if real:
+        w("**This is the in-sample split, and it is the only thing that limits the")
+        w("conclusions below.** Every arm is measured on real FX majors over")
+        w(f"{symbol_years} symbol-years, so a null here is the *strategy* speaking rather")
+        w("than the fixture -- which is the opposite of every previous run of this suite.")
+        w("")
+        w("Specifically not established:")
+        w("")
+        w("1. **Anything out of sample.** 2023-2024 and 2025 were not read. A result this")
+        w("   consequential should be confirmed there before it is acted on, and doing so")
+        w("   spends section 7 budget.")
+        w("2. **That the baseline's own expectancy is distinguishable from zero.** It is")
+        w("   not (D-027: -0.19 R over 102 trades, CI spanning zero). Every delta below is")
+        w("   a difference between two arms neither of which has demonstrated an edge, so")
+        w("   'the baseline beats X' means 'is less bad than X', not 'is profitable'.")
+        w("3. **That the arms are independent tests.** Five arms over one price series,")
+        w("   corrected by Benjamini-Hochberg at q = 0.10 (section 5.6) and reported with")
+        w("   the correction, not around it.")
+        w("4. **That `sweep_only` and `reversed_order` mean at model C what they mean")
+        w("   here.** Both arm zero orders at the shipped default; see the next section.")
+    else:
+        w("**Every arm below asks whether a component contributes, and this fixture answers")
+        w("*no* for all of them by construction.** `bot/data/synthetic.py` is a random walk")
+        w("with no participants and no liquidity, so the true contribution of liquidity")
+        w("identification, of the sweep, of the CHoCH and of their ordering is exactly zero.")
+        w("A null here is the fixture speaking, not the strategy.")
+        w("")
+        w("This matters more here than in any earlier study, because a falsification suite is")
+        w("the one place where *\"we found no difference\"* is the publishable answer -- and")
+        w("section 6.3 explicitly invites the reader to act on one: *\"rebuilt as a")
+        w("mean-reversion model and the SMC framing dropped\"*. **No such conclusion is")
+        w("licensed by anything below.**")
+        w("")
+        w("What the run does establish is that the suite is built, that every arm is driven by")
+        w("the same engine as the baseline, and that the comparison would report a difference")
+        w("if one existed (the positive control). That is instrument validation.")
     w("")
     w("---")
     w("")
@@ -368,9 +390,10 @@ def main() -> int:
           f"{_fmt(a.expectancy_per_setup)} | {a.n_eff:,.0f} |")
     w("")
     w("**Read the gross column and the cost column before the net column.** Gross R is")
-    w("cost-free exit-versus-entry geometry over the planned risk; it is ~0 in every arm,")
-    w("which is the correct answer on a random walk. Net R is not, and the gap between")
-    w("them is entirely the `median SL` column -- see finding 1.")
+    w("cost-free exit-versus-entry geometry over the planned risk; net R subtracts a")
+    w("spread that costs more per R against a tighter stop, so the gap between the two")
+    w("columns is the `median SL` column -- see finding 1. The pre-registration requires")
+    w("section 10.1 to be judged in **both**, which is why both are here.")
     w("")
     infl = base.n_setups / max(base.distinct, 1)
     w(f"**`distinct` is SPEC 9.4's count and the baseline inflates by {infl:.2f}x.** Three")
@@ -421,18 +444,49 @@ def main() -> int:
     beaten_g = [c for c in comparisons.values() if c.baseline_beats_gross]
     confounded = [c for c in comparisons.values() if c.cost_explains_it]
     w(f"**The baseline beats {len(beaten)} of {len(comparisons)} controls in net R and")
-    w(f"{len(beaten_g)} of {len(comparisons)} in gross R.** On this fixture the expected")
-    w("number is zero in both, and the gross column delivers it. The net column does not,")
-    w(f"and the {len(confounded)} arm(s) where the two disagree "
-      f"({', '.join('`' + c.control + '`' for c in confounded) or 'none'}) are finding 1.")
+    w(f"{len(beaten_g)} of {len(comparisons)} in gross R.**")
+    if real:
+        _need = len(comparisons)
+        _pass = len(beaten) == _need and len(beaten_g) == _need
+        w("")
+        w(f"Section 10.1 requires **{_need} of {_need} in both**. "
+          + ("That is met." if _pass else "**That is not met.**"))
+        if not _pass:
+            _miss_g = [c.control for c in comparisons.values() if not c.baseline_beats_gross]
+            w("")
+            w("The arms the baseline does **not** beat in gross R -- the currency about")
+            w("signal rather than about stop width -- are "
+              + ", ".join('`' + m + '`' for m in _miss_g) + ".")
+            w("")
+            w("**This is the row protocol section 10.1 calls the one that decides the")
+            w("question**, and it is the row this project has said from the beginning was")
+            w("the most likely to fail: *\"a strategy that beats a null model but not a")
+            w("sweep-only control has not demonstrated the thing it claims to")
+            w("demonstrate\"*. Read the per-arm sections below before drawing any")
+            w("conclusion from that sentence -- which arms are missed, and in which")
+            w("currency, decides what it means.")
+    else:
+        w("On this fixture the expected number is zero in both, and the gross column")
+        w("delivers it. The net column does not,")
+        w(f"and the {len(confounded)} arm(s) where the two disagree "
+          f"({', '.join('`' + c.control + '`' for c in confounded) or 'none'}) are finding 1.")
     w("")
     verdicts = {c.verdict for c in comparisons.values()}
     if "EQUIVALENT" in verdicts:
-        w("Note any `EQUIVALENT` verdict: on this fixture it is **correct and")
-        w("uninformative**. The true difference really is zero, so an interval tight enough")
-        w("to sit inside the margin is the right answer to the wrong question. The same")
-        w("verdict on real bars would be a finding; here it is a restatement of the fixture.")
-        w("")
+        if real:
+            w("**An `EQUIVALENT` verdict here is a finding, not a formality.** It says the")
+            w(f"interval sits entirely inside +/-{F.EQUIVALENCE_MARGIN_R:.2f} R -- the")
+            w("project's own threshold for a tradable edge -- so the component that arm")
+            w("removes cannot be worth more than that. `UNDERPOWERED` would mean the study")
+            w("could not tell; `EQUIVALENT` means it could, and the answer was no.")
+            w("")
+        else:
+            w("Note any `EQUIVALENT` verdict: on this fixture it is **correct and")
+            w("uninformative**. The true difference really is zero, so an interval tight")
+            w("enough to sit inside the margin is the right answer to the wrong question.")
+            w("The same verdict on real bars would be a finding; here it is a restatement")
+            w("of the fixture.")
+            w("")
     w("---")
     w("")
 
@@ -527,12 +581,19 @@ def main() -> int:
     w("not with any arm.**")
     w("")
     sw = comparisons["sweep_only"]
-    w(f"On this fixture the baseline beats `sweep_only` by {sw.delta:+.3f} R per setup with")
-    w(f"a CI of [{sw.ci_low:.3f}, {sw.ci_high:.3f}] -- **excluding zero, so section 10.1's")
-    w("row is satisfied** -- on a random walk, where the true difference is zero by")
-    w("construction. That should be impossible, and the explanation is not a bug in the")
-    w("engine or the arm. It is that **R is a ratio and the arms do not share its")
-    w("denominator**:")
+    if real:
+        w(f"The baseline beats `sweep_only` by {sw.delta:+.3f} R per setup net, CI")
+        w(f"[{sw.ci_low:.3f}, {sw.ci_high:.3f}], and by {sw.gross_delta:+.3f} gross. This")
+        w("arm clears the row in both currencies. The point of this section is the arms")
+        w("that clear it in **only one**, because the difference between the two columns is")
+        w("not signal:")
+    else:
+        w(f"On this fixture the baseline beats `sweep_only` by {sw.delta:+.3f} R per setup")
+        w(f"with a CI of [{sw.ci_low:.3f}, {sw.ci_high:.3f}] -- **excluding zero, so")
+        w("section 10.1's row is satisfied** -- on a random walk, where the true difference")
+        w("is zero by construction. That should be impossible, and the explanation is not a")
+        w("bug in the engine or the arm. It is that **R is a ratio and the arms do not")
+        w("share its denominator**:")
     w("")
     w("| | baseline | `sweep_only` |")
     w("|---|---:|---:|")

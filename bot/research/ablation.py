@@ -204,7 +204,12 @@ MATRIX: tuple[AblationSpec, ...] = (
     AblationSpec("each SL model", "sl.model = S4", Kind.PAIRED,
                  {"sl": {"model": "atr"}}),
     AblationSpec("each TP model", "tp.model = T2", Kind.PAIRED,
-                 {"tp": {"model": "opposing_liquidity"}}),
+                 {"tp": {"model": "opposing_liquidity"}},
+                 note="Armed nothing until D-019, and the cause reported here was wrong: "
+                      "not `tp.min_target_rank`, but an engine that never passed the "
+                      "liquidity book to the target gate, plus an inverted opposing side. "
+                      "Both fixed. `min_target_rank` was then raised 2.0 -> 5.0 by "
+                      "instruction, SELECTED BY ITS OUTCOME on this fixture -- see D-019."),
     AblationSpec("each TP model", "tp.model = T3", Kind.PAIRED,
                  {"tp": {"model": "partial_ladder"}},
                  note="D-014 item 4: T3's `tp_1` is the 1R rung against `tp.min_rr` = 1.5, "

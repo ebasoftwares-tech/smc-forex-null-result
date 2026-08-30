@@ -65,7 +65,7 @@ from bot.core.entries import (
 from bot.core.exits import ExitOutcome, ExitReason, resolve_exit
 from bot.core.fvg import Fvg, detect_fvgs
 from bot.core.indicators import atr_ref
-from bot.core.liquidity import Side
+from bot.core.liquidity import LevelSnapshot, Side
 from bot.core.mss import MssResult, SetupCandidate, analyse_mss
 from bot.core.order_blocks import propose
 from bot.core.risk import OpenPosition, RiskLedger
@@ -111,6 +111,11 @@ class Market:
     sessions_by_bar: dict[int, str]
     levels_created: int
     sweeps_confirmed: int
+    #: SPEC 17.1's T2 needs the liquidity book as it stood at the bar the setup armed,
+    #: and the finished book cannot supply that -- SPEC 8.8's merge rewrites a level's
+    #: price, tier and strength in place. Captured per bar by the liquidity engine; see
+    #: ``LevelSnapshot``. Empty only for a market built before this existed.
+    level_snapshots: dict[int, tuple[LevelSnapshot, ...]] = field(default_factory=dict)
     #: BACKTEST_PROTOCOL section 6.4's controls, and nothing else, set this.  A control
     #: is a *different setup stream over the same prices*, so it replaces the stream
     #: rather than the market -- which is what keeps every control comparable to the
@@ -183,6 +188,7 @@ def build_market(
         opposing_sweep_bars=opposing,
         sessions_by_bar=by_bar,
         levels_created=len(book.levels),
+        level_snapshots=book.snapshots,
         sweeps_confirmed=len(confirmed),
     )
 
@@ -457,9 +463,15 @@ def _pass_one(
             ))
             continue
 
+        # SPEC 17.2's gate reads the liquidity book for T2, and it must read it as it
+        # stood at the arming bar -- see ``LevelSnapshot``. Passing nothing (which this
+        # did until D-019) leaves ``select_target_level`` iterating an empty sequence, so
+        # T2 rejects every setup with NO_TARGET_AVAILABLE whatever ``min_target_rank`` is.
+        snapshot = market.level_snapshots.get(b, ())
         decision = evaluate(
             cfg, armed.plan, symbol=market.symbol, atr_value=atr_v,
             equity=cfg.account.starting_equity, apply_limits=False, skip_sizing=True,
+            levels=snapshot, ranks={lv.id: lv.rank for lv in snapshot},
         )
         if not decision.ok:
             counts["gate_rejected"] += 1
@@ -603,10 +615,16 @@ def run(
         for c in by_open.get(bar, ()):
             at = c.fill_at or from_epoch_s(market.h4.close_time[bar])
             ledger.mark_equity(eq)
+            # The **arming** bar's book, not this fill bar's. The target is part of the
+            # plan formed at arming, and pass two re-runs the gate over that plan: reading
+            # a later book here would let the two passes disagree about whether the same
+            # setup had a target, which is a disagreement about a price nobody has paid.
+            snapshot = market.level_snapshots.get(c.setup.choch_bar, ())
             decision = evaluate(
                 cfg, c.plan, symbol=market.symbol, atr_value=c.atr_at_entry,
                 equity=eq, ledger=ledger if apply_limits else None,
                 at=at, apply_limits=apply_limits,
+                levels=snapshot, ranks={lv.id: lv.rank for lv in snapshot},
             )
             if not decision.ok:
                 rejections.append(Rejection(

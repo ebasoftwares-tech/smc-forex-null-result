@@ -352,3 +352,112 @@ def test_every_rejection_carries_a_named_reason(cfg, result):
     for r in result.rejections:
         assert r.reason
         assert r.stage is not None
+
+
+# ------------------------------------------- the liquidity book reaches the gate (D-019)
+#
+# SPEC 17.2's target gate reads the liquidity book for T2. Until D-019 the engine passed
+# it nothing, so `select_target_level` iterated an empty sequence and T2 rejected every
+# setup with NO_TARGET_AVAILABLE -- at any value of `tp.min_target_rank`, including 0.
+
+
+def test_the_market_carries_a_per_bar_view_of_the_liquidity_book(market):
+    assert market.level_snapshots, "no snapshots captured"
+    assert set(market.level_snapshots) <= set(range(market.h4.n))
+    # Capped by SPEC 8.9's prune cap, so this is tens of objects per bar, not a book copy.
+    assert max(len(v) for v in market.level_snapshots.values()) <= 40
+
+
+def test_the_snapshot_is_causal_and_cannot_be_reconstructed_from_the_finished_book(
+    cfg, m1_half_year, market
+):
+    """The third instance of a trap this project has recorded twice (D-009 §4 for swings,
+    D-011 §3 for FVGs).
+
+    SPEC 8.8's merge mutates a surviving level's `price`, `tier` and `strength` **in
+    place**, and termination rewrites `status`. So asking a finished level what it looked
+    like at an early bar returns what it became by the last one. The snapshot is captured
+    at the bar instead; this asserts it actually differs from the finished book, because
+    a test that passed either way would prove nothing.
+    """
+    from bot.core.liquidity import build_candidates, LiquidityEngine
+    from bot.data.resample import resample
+    from bot.core.swings import detect_swings
+    from bot.core.structure import analyse_structure
+    from bot.core.sessions import build_sessions
+
+    h4 = market.h4
+    d1 = resample(m1_half_year, "D1", cfg)
+    candidates = build_candidates(
+        cfg=cfg, h4=h4, d1=d1, w1=resample(m1_half_year, "W1", cfg),
+        mn1=resample(m1_half_year, "MN1", cfg),
+        sessions=build_sessions(resample(m1_half_year, "M15", cfg), cfg),
+        h4_structure=analyse_structure(h4, cfg), d1_swings=detect_swings(d1, cfg),
+    )
+    book = LiquidityEngine(h4, cfg, candidates, d1_close_times=d1.close_time).run()
+    final = {l.id: l for l in book.levels}
+
+    # No snapshot may contain a level that was not yet confirmed, or was already dead.
+    for bar, snap in book.snapshots.items():
+        for view in snap:
+            lvl = final[view.id]
+            assert 0 <= lvl.confirmed_bar <= bar, (bar, view.id)
+            assert lvl.terminal_bar < 0 or lvl.terminal_bar >= bar, (bar, view.id)
+
+    # And the finished book genuinely disagrees with the snapshots, which is the whole
+    # reason the snapshots exist.
+    moved = 0
+    for bar, snap in book.snapshots.items():
+        for view in snap:
+            lvl = final[view.id]
+            if lvl.price != view.price or lvl.strength != view.strength:
+                moved += 1
+    assert moved > 0, (
+        "no level's price or strength ever changed after being snapshotted -- either the "
+        "merge stopped mutating in place, or this test is no longer testing anything"
+    )
+
+
+def test_t2_can_arm_now_that_the_gate_can_see_the_book(cfg, market):
+    """The wiring bug, pinned by its symptom.
+
+    Before D-019 this was `NO_TARGET_AVAILABLE` on **every** setup, and lowering
+    `tp.min_target_rank` to 0 changed nothing -- the filter was never reached because the
+    sequence being filtered was empty.
+    """
+    from collections import Counter
+    from bot.config.loader import load_config
+
+    c, _ = load_config(overrides={"tp": {"model": "opposing_liquidity"}})
+    res = run(c, market, apply_limits=False)
+    reasons = Counter(r.reason for r in res.rejections)
+
+    setups = len(market.setups)
+    assert reasons["NO_TARGET_AVAILABLE"] < setups, (
+        "T2 still finds no target on any setup -- the book is not reaching the gate"
+    )
+
+
+def test_both_passes_gate_against_the_same_bars_book(cfg, market):
+    """Pass two re-runs the target gate over the plan pass one formed. If it read the fill
+    bar's book instead of the arming bar's, the two could disagree about whether the same
+    setup had a target -- a disagreement about a price nobody has paid."""
+    from bot.config.loader import load_config
+
+    c, _ = load_config(overrides={"tp": {"model": "opposing_liquidity"}})
+    geometry = run(c, market, apply_limits=False)
+    portfolio = run(c, market, apply_limits=True)
+
+    # Every trade the portfolio pass books must have survived pass one's gate too.
+    assert {t.setup_id for t in portfolio.trades} <= {t.setup_id for t in geometry.trades}
+
+    # `result.rejections` carries BOTH passes, so a target rejection cannot be attributed
+    # by inspecting one run. Pass one is identical in both, so any *extra* target
+    # rejection when the portfolio pass runs is pass two's -- and there must be none.
+    def n_no_target(res):
+        return sum(1 for r in res.rejections if r.reason == "NO_TARGET_AVAILABLE")
+
+    assert n_no_target(portfolio) == n_no_target(geometry), (
+        "the portfolio pass added target rejections, so it is reading a different bar's "
+        "book from the one that formed the plan"
+    )

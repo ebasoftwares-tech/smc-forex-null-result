@@ -254,9 +254,16 @@ def test_an_inert_toggle_is_not_reported_as_no_measurable_effect(cfg, market, ba
 
 
 def test_a_variant_that_arms_nothing_is_reported_as_such(cfg, market, base_arm):
-    """T2's delta would otherwise read as a small effect. It is the baseline's own
-    expectancy with zero subtracted from it."""
-    spec = next(s for s in A.MATRIX if s.name == "tp.model = T2")
+    """T3's delta would otherwise read as a small effect. It is the baseline's own
+    expectancy with zero subtracted from it.
+
+    **T3, not T2, and the distinction is the point.** T3 is dead *structurally*: its
+    `tp_1` is the 1R rung against `tp.min_rr` = 1.5, so SPEC 17.2 rejects it on every
+    setup at any `min_rr` above 1.0 (D-014 item 4). T2 was dead for a reason that turned
+    out to be a bug (D-019) and now arms; pinning this behaviour to T2 would have made the
+    test depend on a fixture coincidence rather than on a fact about the configuration.
+    """
+    spec = next(s for s in A.MATRIX if s.name == "tp.model = T3")
     c, _ = load_config(overrides=dict(spec.overrides))
     variant = _arm(c, market)
     r = A.evaluate(spec, base_arm, variant, trading_days=130.0,

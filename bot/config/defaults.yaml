@@ -224,7 +224,12 @@ tp:
   r_multiple: 2.0
   min_rr: 1.5
   below_min_rr_action: skip
-  min_target_rank: 2.0
+  # DECISION D-019 (2026-08-28): raised 2.0 -> 5.0 by explicit instruction.
+  # SELECTED BY ITS OUTCOME on a synthetic random walk -- T2 arms 48 of 165 setups here
+  # against 5 at 2.0 -- which is the basis BACKTEST_PROTOCOL 10.2 prohibits. The 10
+  # resulting trades are noise on this fixture. Re-derive on real bars; see the schema
+  # field's description and D-019 for the full provenance.
+  min_target_rank: 5.0
   target_buffer_atr: 0.15
   ladder_first_r: 1.0
 

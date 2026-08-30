@@ -271,3 +271,37 @@ def test_the_document_records_what_it_cannot_evaluate():
     text = _prereg_text()
     for gap in ("H6", "tier_confirmation_tf", "killzone", "T2", "projection"):
         assert gap in text, f"the document does not record the {gap} gap"
+
+
+def test_the_outcome_selected_default_keeps_its_provenance(cfg):
+    """`tp.min_target_rank` was chosen by its outcome on synthetic data (D-019), which is
+    the basis section 10.2 prohibits. That is recorded in four places so it cannot later be
+    cited as a reasoned default by someone who has not read the re-registration.
+
+    This test exists because provenance written in prose is exactly the kind of thing a
+    tidy-up removes. If the value is ever re-derived properly on real bars, this test
+    should fail and be rewritten -- that is the point.
+    """
+    from bot.config.schema import TpConfig
+
+    desc = TpConfig.model_fields["min_target_rank"].description or ""
+    assert "outcome" in desc.lower(), "the schema no longer records how the value was set"
+    assert "D-019" in desc
+
+    text = _prereg_text()
+    assert "Re-registration record" in text
+    assert "v1.1" in text
+    assert "7f8d363a69538c277037d1c68bda527ea9a68871" in text, (
+        "the superseded v1.0 blob hash must stay recorded, or the chain is broken"
+    )
+    # And the document must not describe the value as principled.
+    assert "selected by its outcome" in text.lower()
+
+
+def test_t3_is_the_only_tp_model_still_structurally_dead(cfg):
+    """v1.0 listed T2 and T3 as arming nothing. T2's cause was a pair of bugs (D-019), so
+    only T3's remains -- an arithmetic mismatch between `ladder_first_r` and `min_rr`."""
+    assert cfg.tp.ladder_first_r < cfg.tp.min_rr, (
+        "T3's first rung now clears the RR gate, so it is no longer structurally dead "
+        "and both the pre-registration and the ablation matrix need updating"
+    )

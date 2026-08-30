@@ -1,4 +1,11 @@
-# Pre-registration — SMC Bot v1.0
+# Pre-registration — SMC Bot v1.1
+
+> **v1.1 supersedes v1.0 (blob `7f8d363a69538c277037d1c68bda527ea9a68871`).** A FROZEN
+> default changed — `tp.min_target_rank`, 2.0 → 5.0 — which `PARAMETERS.md` §5.2 and §10
+> of this document both classify as a **new pre-registration**, not an amendment. No
+> out-of-sample evaluation had occurred, so no result is attached to v1.0 and nothing is
+> invalidated. **The new value was selected by its outcome on synthetic data**; §11 records
+> the provenance in full and it should be read before any T2 number is cited.
 
 **Status: COMMITTED, pending one mechanical amendment.** Six of `BACKTEST_PROTOCOL.md`
 §1's seven items are fixed below. The seventh — item 4, the literal date ranges — is fixed
@@ -283,14 +290,17 @@ reported as unavailable, and implementing it is a new registration (§10).
 
 | Arm | Cause |
 |---|---|
-| `tp.model = T2` | `NO_TARGET_AVAILABLE` on every setup: no opposing liquidity level reaches `tp.min_target_rank = 2.0` |
-| `tp.model = T3` | `RR_BELOW_MIN` on every setup: T3's `tp_1` is the 1R rung against `tp.min_rr = 1.5` |
+| `tp.model = T3` | `RR_BELOW_MIN` on every setup: T3's `tp_1` is the 1R rung against `tp.min_rr = 1.5` (D-014 item 4) |
 
-So §6.5's "each TP model" row **reduces to T1 vs T4**, and H7's target-model half is
-unanswerable at the defaults. **No default is changed to fix this.** §10.2 forbids moving a
-parameter to make a result appear, and although moving one *before* any result exists is a
-different act, it is still a specification change and belongs in a registration of its own.
-It is reported as a structural limitation.
+**T2 was on this list in v1.0 and is not on it now**, and the reason is a correction rather
+than a parameter change: it armed nothing because the engine never passed the liquidity
+book to the target gate, and because the target side was inverted. Both were bugs; both are
+fixed (D-019). T2 now arms.
+
+So §6.5's "each TP model" row is **T1, T2 and T4** — T3 alone remains structurally dead,
+and no default was changed to rescue it. §10.2 forbids moving a parameter to make a result
+appear; moving one *before* any result exists is a different act, but it is still a
+specification change and belongs in a registration of its own.
 
 ### 6.3 Three components cannot be read one at a time
 
@@ -376,7 +386,7 @@ Listed so that none of it can later be presented as a discovery.
 | H6 (MTF bias) | No bias engine. Every MSS count in the project is an upper bound |
 | The D-002 counterfactual | `liq.tier_confirmation_tf` read by no module |
 | Session and killzone filters | Not implemented |
-| T2 and T3 target models | Arm no trades at the shipped defaults |
+| T3 target model | Arms no trades at the shipped defaults (D-014 item 4). T2 was listed here in v1.0 and no longer is — see §6.2 |
 | `ob.definition` | Reaches the engine correctly but is inert at the shipped defaults — only entry D or SL S3 consumes an order block |
 | §5.5 plateaus | Never run: a plateau needs a metric that varies across the grid, and on a random walk it varies only by noise |
 | The Phase 9 funnel gate | Passes on a **projection**, not a measurement |
@@ -418,5 +428,42 @@ The following are known **new-registration** triggers, named in advance:
 
 - The bias engine landing (H6 becomes evaluable; `M` → 48,000).
 - Implementing the session filter, the killzone filter, or `liq.tier_confirmation_tf`.
-- Changing `tp.min_target_rank` or `tp.min_rr` so that T2 or T3 can arm.
+- Changing `tp.min_rr` so that T3 can arm. (`tp.min_target_rank` was changed in v1.1 —
+  see §11.)
 - Any change to the falsification row's currency rule (§7.1).
+
+---
+
+## 11. Re-registration record
+
+### v1.1 — 2026-08-28 — `tp.min_target_rank` 2.0 → 5.0
+
+| | |
+|---|---|
+| Superseded | v1.0, blob `7f8d363a69538c277037d1c68bda527ea9a68871` |
+| Class | FROZEN default (`PARAMETERS.md` §5.2 → new pre-registration) |
+| Results invalidated | **None.** No OOS evaluation had occurred |
+| Basis | **Selected by its outcome on synthetic data, by explicit instruction** |
+
+**This is the basis §10.2 prohibits, and it is recorded rather than dressed up.** The value
+was chosen because T2 arms 48 of 165 setups and produces 10 trades at 5.0, against 5 and 0
+at 2.0. The fixture is a random walk, so those 10 trades are noise: **the number carries no
+evidence that 5.0 is right**, only that it is where this fixture's targets sit far enough
+away to clear the 1.5 RR gate.
+
+There is a separate, outcome-independent case that **2.0 was wrong**, which stands on its
+own and would survive on any data: `rank` = `tier_weight(1–3) + 0.5 × min(strength, 4) +
+recency(0–1)` spans **[1.5, 6.0]** and measures a median of **4.86** across 107,882
+level-bars, so a threshold of 2.0 sat essentially at the floor and filtered almost nothing.
+It was mis-scaled against the function it gates. That argument justifies *changing* it; it
+does not justify *this* value.
+
+**What follows for reading results:** any T2 figure produced under v1.1 is conditional on a
+parameter fitted to the synthetic fixture, and `tp.min_target_rank` must be re-derived on
+real bars before T2 is compared with T1 or T4 for any purpose. The honest treatment on real
+data is to re-register the value from the observed rank distribution — a percentile stated
+in advance — rather than to inherit this one.
+
+Provenance is carried in the schema field description, `defaults.yaml`, the ablation
+matrix's spec note and D-019, so the value cannot be cited as reasoned by someone who has
+not read this.

@@ -41,6 +41,14 @@ ATR = 0.00450
 
 
 def level(price: float, side: Side, ident: str = "L1", active: bool = True):
+    """A liquidity level for the target tests.
+
+    **The sides here were all inverted until D-019**, along with `_opposing_side` itself:
+    a bullish setup's target was built as SELL_SIDE, which `liquidity.Side` defines as the
+    pool sitting *below* price. The give-away was in this very helper -- every level is
+    built with `source=PREV_DAY_HIGH`, and `period_levels` assigns a previous-day high to
+    **BUY_SIDE**. The fixtures disagreed with the source they claimed to come from.
+    """
     at = datetime(2026, 3, 2, 12, tzinfo=UTC)
     return LiquidityLevel(
         id=ident, symbol="EURUSD", side=side, source=LevelSource.PREV_DAY_HIGH,
@@ -75,7 +83,7 @@ def test_T1_mirrors_for_a_sell(cfg):
 
 def test_T2_sits_in_front_of_the_level_never_at_it(cfg):
     """SPEC 17.1: the level is where the resting orders are; an order at it is behind them."""
-    lvl = level(1.09240, Side.SELL_SIDE)
+    lvl = level(1.09240, Side.BUY_SIDE)
     t = ask(cfg, TargetModel.T2_OPPOSING_LIQUIDITY, levels=[lvl],
             ranks={lvl.id: cfg.tp.min_target_rank})
     assert t.ok
@@ -86,24 +94,24 @@ def test_T2_sits_in_front_of_the_level_never_at_it(cfg):
 
 def test_T2_takes_the_nearest_qualifying_level_not_the_best_ranked(cfg):
     """Rank filters; distance orders. The target is the first pool price has to reach."""
-    near = level(1.09000, Side.SELL_SIDE, "near")
-    far = level(1.09800, Side.SELL_SIDE, "far")
+    near = level(1.09000, Side.BUY_SIDE, "near")
+    far = level(1.09800, Side.BUY_SIDE, "far")
     ranks = {"near": cfg.tp.min_target_rank, "far": cfg.tp.min_target_rank + 5}
     t = ask(cfg, TargetModel.T2_OPPOSING_LIQUIDITY, levels=[far, near], ranks=ranks)
     assert t.reference_id == "near"
 
 
 def test_T2_ignores_levels_below_min_target_rank(cfg):
-    weak = level(1.09000, Side.SELL_SIDE, "weak")
-    strong = level(1.09800, Side.SELL_SIDE, "strong")
+    weak = level(1.09000, Side.BUY_SIDE, "weak")
+    strong = level(1.09800, Side.BUY_SIDE, "strong")
     ranks = {"weak": cfg.tp.min_target_rank - 0.5, "strong": cfg.tp.min_target_rank}
     t = ask(cfg, TargetModel.T2_OPPOSING_LIQUIDITY, levels=[weak, strong], ranks=ranks)
     assert t.reference_id == "strong"
 
 
 def test_T2_ignores_inactive_levels_and_the_wrong_side(cfg):
-    dead = level(1.09000, Side.SELL_SIDE, "dead", active=False)
-    wrong = level(1.09100, Side.BUY_SIDE, "wrong")
+    dead = level(1.09000, Side.BUY_SIDE, "dead", active=False)
+    wrong = level(1.09100, Side.SELL_SIDE, "wrong")
     ranks = {"dead": 9.0, "wrong": 9.0}
     assert select_target_level(
         [dead, wrong], cfg, direction=Direction.BULLISH, entry_price=ENTRY, ranks=ranks
@@ -119,7 +127,7 @@ def test_T2_with_no_qualifying_level_rejects_rather_than_falling_back_to_T1(cfg)
 
 def test_T2_rejects_when_the_buffer_pulls_the_target_back_through_the_entry(cfg):
     """A level closer than the buffer is wide is not a target."""
-    lvl = level(ENTRY + 0.00010, Side.SELL_SIDE)
+    lvl = level(ENTRY + 0.00010, Side.BUY_SIDE)
     t = ask(cfg, TargetModel.T2_OPPOSING_LIQUIDITY, levels=[lvl],
             ranks={lvl.id: cfg.tp.min_target_rank})
     assert not t.ok and t.reason is TargetReject.NO_TARGET_AVAILABLE
@@ -129,7 +137,7 @@ def test_T2_rejects_when_the_buffer_pulls_the_target_back_through_the_entry(cfg)
 
 
 def test_a_target_inside_min_rr_is_rejected(cfg):
-    lvl = level(ENTRY + 1.2 * SL, Side.SELL_SIDE)
+    lvl = level(ENTRY + 1.2 * SL, Side.BUY_SIDE)
     t = ask(cfg, TargetModel.T2_OPPOSING_LIQUIDITY, levels=[lvl],
             ranks={lvl.id: cfg.tp.min_target_rank})
     assert not t.ok and t.reason is TargetReject.RR_BELOW_MIN
@@ -177,7 +185,7 @@ def test_T4_is_exempt_from_the_gate_which_makes_the_ablation_unpaired(cfg):
     — and T4 therefore accepts a setup that T1–T3 reject. The streams are not shared,
     and a comparison that does not say so is wrong.
     """
-    tight = level(ENTRY + 1.2 * SL, Side.SELL_SIDE)
+    tight = level(ENTRY + 1.2 * SL, Side.BUY_SIDE)
     ranks = {tight.id: cfg.tp.min_target_rank}
     t2 = ask(cfg, TargetModel.T2_OPPOSING_LIQUIDITY, levels=[tight], ranks=ranks)
     t4 = ask(cfg, TargetModel.T4_STRUCTURE_TRAIL, levels=[tight], ranks=ranks)
@@ -197,3 +205,53 @@ def test_below_min_rr_action_cannot_be_set_to_fixed_fallback(cfg):
     """SPEC 17.2 names ``fixed_fallback`` and rejects it in the same paragraph."""
     with pytest.raises(Exception):
         load_config(overrides={"tp": {"below_min_rr_action": "fixed_fallback"}})
+
+
+# ------------------------------------------------- the convention itself (D-019)
+
+
+def test_a_long_targets_buy_side_liquidity_and_a_short_targets_sell_side(cfg):
+    """SPEC 17.1's worked example, as a test.
+
+    Its setup is a BUY LIMIT off a swept `sweep_low`, and the target it names is
+    *"nearest opposing liquidity **PDH** 1.17240"*. A previous-day HIGH is a BUY_SIDE
+    level (`period_levels` assigns it), so a long targets BUY_SIDE. "Opposing" means
+    opposing to the side the setup **swept** -- a bullish setup sweeps SELL_SIDE below and
+    runs at the BUY_SIDE pool above.
+
+    This was inverted for the life of the project, and both the code's docstring and these
+    tests asserted the inversion, which is why nothing caught it.
+    """
+    above = level(ENTRY + 3 * SL, Side.BUY_SIDE, "above")
+    below_side_above_price = level(ENTRY + 3 * SL, Side.SELL_SIDE, "wrong_side")
+    ranks = {"above": 9.0, "wrong_side": 9.0}
+
+    picked = select_target_level(
+        [below_side_above_price, above], cfg,
+        direction=Direction.BULLISH, entry_price=ENTRY, ranks=ranks,
+    )
+    assert picked is not None and picked.id == "above"
+
+    # And the mirror: a short targets the sell-side pool below.
+    lower = level(ENTRY - 3 * SL, Side.SELL_SIDE, "below")
+    upper_side_below = level(ENTRY - 3 * SL, Side.BUY_SIDE, "wrong_side_2")
+    picked = select_target_level(
+        [upper_side_below, lower], cfg,
+        direction=Direction.BEARISH, entry_price=ENTRY, ranks={"below": 9.0, "wrong_side_2": 9.0},
+    )
+    assert picked is not None and picked.id == "below"
+
+
+def test_a_level_snapshot_can_stand_in_for_a_level_in_the_selector(cfg):
+    """The engine hands the gate `LevelSnapshot`s, not `LiquidityLevel`s, because the
+    finished book cannot be read causally (D-019). The selector must accept both."""
+    from bot.core.liquidity import LevelSnapshot
+
+    snap = LevelSnapshot(
+        id="S1", side=Side.BUY_SIDE, price=ENTRY + 3 * SL, rank=9.0, tier=1, strength=2,
+    )
+    picked = select_target_level(
+        [snap], cfg, direction=Direction.BULLISH, entry_price=ENTRY, ranks={"S1": 9.0},
+    )
+    assert picked is snap
+    assert snap.is_active

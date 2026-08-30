@@ -1,7 +1,7 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-28, after the falsification suite, the ablation matrix and the
-pre-registration.
+Last updated: 2026-08-28, after the falsification suite, the ablation matrix, the
+pre-registration, and the T2 fixes (D-019).
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -30,13 +30,13 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 |---|---|
 | **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 |
 | **Studies complete** | H5 (SPEC 6.9), the falsification suite (protocol 6.3/6.4), the ablation matrix (6.5) |
-| **Pre-registration** | **COMMITTED** — `docs/PRE_REGISTRATION.md`, blob `7f8d363a6953` (D-018). Only item 4's literal dates are outstanding, and they are fixed as a rule |
-| **Tests** | 652, all passing |
-| **Commits** | 16, on `master` |
+| **Pre-registration** | **COMMITTED at v1.1** — `docs/PRE_REGISTRATION.md`, blob `b9142a0fcb09` (D-018, re-registered by D-019). Only item 4's literal dates are outstanding, and they are fixed as a rule |
+| **Tests** | 660, all passing |
+| **Commits** | 17, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 652 tests, ~110s
+.venv/Scripts/python.exe -m pytest tests/          # 660 tests, ~115s
 .venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
 .venv/Scripts/python.exe scripts/phase12_report.py  # the Phase 12 entry engine
 .venv/Scripts/python.exe scripts/phase13_report.py  # the Phase 13 risk layer
@@ -313,11 +313,13 @@ what §5.6 exists to catch.
    counterpart in `run()`. Fixed, default byte-identical. **Still inert at the shipped
    defaults**: entry model C reads an FVG and stop S1 reads the sweep extreme, so neither
    consumes an order block. Only entry D or SL S3 makes it observable.
-3. **A fifth default that cannot fire.** D-014 recorded four; `tp.min_target_rank = 2.0`
-   is a fifth — **T2 arms on zero setups**, `NO_TARGET_AVAILABLE` on every one. T2 is the
-   only target model that aims at a liquidity level, the one place the thesis about where
-   price is *going* enters the exit. With T3 (D-014 item 4) also dead, §6.5's "each TP
-   model" row reduces to T1 vs T4.
+3. ~~**A fifth default that cannot fire.**~~ **RETRACTED — D-019.** T2 armed nothing
+   because the engine never passed the liquidity book to the target gate and because
+   `_opposing_side` was inverted, not because of `tp.min_target_rank`. Setting the rank to
+   0 changed nothing, which is the measurement that should have preceded naming a cause.
+   Both bugs fixed; T2 now arms, and its real constraint is SPEC 17.2's RR gate. **T3
+   remains structurally dead** (D-014 item 4), so §6.5's "each TP model" row is T1, T2 and
+   T4.
 4. **"One component at a time" is not achievable where components share objects.**
    `disp.mode = bar` fills 2 trades because `leg` mode confirms displacement *by finding
    an FVG* and entry model C enters on that FVG — so the row measures the entry model.
@@ -377,7 +379,7 @@ bot/research/   stats.py (shared primitives), sweep_study.py (H2),
 scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11,12,13,14}_report.py,
                 marginal_value_report.py, falsification_report.py,
                 ablation_report.py, regen_golden.py
-tests/          652 tests + tests/golden/structure_h4.json
+tests/          660 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -400,7 +402,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-018 record corrections and findings from each phase's implementation.
+D-004 through D-019 record corrections and findings from each phase's implementation.
 
 ---
 
@@ -472,6 +474,10 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 60 | **`M = 9,600`, not `PARAMETERS.md`'s 6,912 or 8,000.** It is computed from the schema's own grids by `preregistration.py` and pinned by a test that parses them back out of the field descriptions. `M` scales the Deflated Sharpe and §5.6's null, so a wrong one mis-corrects every claim (D-018 §1). |
 | 61 | **The pre-registration is committed and its blob hash is in §2.** Changing a threshold, a grid, `M`, or a decision rule in it is **not an amendment** — it is a new pre-registration, and every result under the old one is reported as such (D-018). |
 | 62 | **`INCONCLUSIVE` is a verdict, not a soft FAIL**: fewer than 200 OOS trades, or an MDE exceeding the +0.10 R being tested for. A study that could not have seen the effect has failed to look, not failed to find (D-018 §4). |
+| 63 | **A rejection reason names the gate that refused, not the reason it refused.** T2's `NO_TARGET_AVAILABLE` was read as "no level clears the rank filter"; the filter was never reached, because the engine passed an empty book. Setting the parameter to 0 and seeing nothing change is the one-line check (D-019 §1). |
+| 64 | **The finished `LiquidityBook` cannot be read causally at all.** SPEC 8.8's merge rewrites a survivor's `price`, `tier` and `strength` **in place**. Use `book.active_at(bar)` / `ranks_at(bar)`, never a finished level. Third instance of D-009 §4 / D-011 §3 (D-019 §4). |
+| 65 | **A long targets BUY_SIDE liquidity, a short SELL_SIDE.** Inverted for the project's life, with six tests asserting the inversion; SPEC 17.1's worked example targets a PDH (BUY_SIDE) for a BUY LIMIT (D-019 §3). |
+| 66 | **`tp.min_target_rank = 5.0` was SELECTED BY ITS OUTCOME** on the synthetic fixture, by instruction (D-019 §6). It carries no evidence of being right. Re-derive it on real bars before any T2 comparison means anything. |
 
 ---
 
@@ -542,9 +548,17 @@ mistake, and every one of them is now pinned by tests.
   numbers no test asserted on. Fixed with spies on the wiring. **Testing a primitive is
   not testing that the caller uses it.**
 
+- **T2 (D-019):** the same shape again, and this time in a *diagnosis* rather than a
+  statistic. `NO_TARGET_AVAILABLE` on every setup was read as "no level clears the rank
+  filter" and written up as a finding — a fifth unreachable default — when the filter was
+  never reached at all, because the engine passed an empty book. **The check was one line:
+  set the parameter to 0 and see whether anything changes.** Nothing did. A rejection
+  reason names the gate that refused, not the reason it refused.
+
 **A statistic not compared against what noise alone would produce is not a finding.**
 **A statistic compared in a unit the two arms do not share is not one either.**
-**And a delta of zero is not a finding until you know whether the thing ever fired.**
+**A delta of zero is not a finding until you know whether the thing ever fired.**
+**And a rejection reason is not a diagnosis until you have moved the thing you blamed.**
 
 Every study module carries a **positive control** as well as a null result. A study that
 can only ever say "no edge" would pass the random-walk fixture and be worthless.
@@ -724,12 +738,13 @@ What is left:
 1. **Stamp item 4's literal dates** from §4.1's rule at data acquisition, and commit them
    as an amendment **before the first run**. It changes no threshold, no grid and no
    decision rule — it is the one mechanical step the document schedules for itself.
-2. **Decide whether to make T2 and T3 testable at all.** Both arm zero trades at the
-   shipped defaults (`tp.min_target_rank`, `tp.min_rr`), so §6.5's "each TP model" row is
-   T1 vs T4 and H7's target half is unanswerable. The pre-registration deliberately
-   changes **no default** and lists this as a new-registration trigger instead — moving a
-   parameter before any result exists is not §10.2's prohibited act, but it is still a
-   specification change and is the user's call, not a quiet fix.
+2. **Re-derive `tp.min_target_rank` on real bars.** It was raised 2.0 → 5.0 in v1.1 and
+   **selected by its outcome on the synthetic fixture** (D-019 §6), which is the basis
+   §10.2 prohibits. It carries no evidence of being right. The honest treatment on real
+   data is to re-register it from the observed rank distribution — a percentile stated in
+   advance — rather than inherit this one. Until then, **no T2 figure is comparable with
+   T1 or T4 for any purpose.** T3 is separately still dead (`tp.min_rr`) and remains a
+   named new-registration trigger.
 3. **Build `events.jsonl`** (SPEC 21.1). The engine currently holds trades and rejections
    in memory and the report reads them there, which inverts the specification's
    relationship — the log is the primary artefact and the tables are derived from it. Fine

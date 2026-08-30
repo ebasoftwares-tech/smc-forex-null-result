@@ -76,8 +76,18 @@ class TargetPlan:
 
 
 def _opposing_side(direction: Direction) -> Side:
-    """A long targets sell-side liquidity above; a short targets buy-side below."""
-    return Side.SELL_SIDE if direction is Direction.BULLISH else Side.BUY_SIDE
+    """A long targets **buy-side** liquidity above; a short targets sell-side below.
+
+    Inverted until D-019, with a docstring that contradicted the project's own vocabulary:
+    ``liquidity.Side`` defines BUY_SIDE as the pool sitting *above* price, so "sell-side
+    liquidity above" names something that cannot exist.
+
+    "Opposing" is opposing to the side the setup **swept**. A bullish setup sweeps
+    SELL_SIDE liquidity below and runs toward the BUY_SIDE pool above -- which is what
+    SPEC 17.1's worked example does when it takes "nearest opposing liquidity PDH" as the
+    target for a BUY LIMIT: a previous-day HIGH is a BUY_SIDE level.
+    """
+    return Side.BUY_SIDE if direction is Direction.BULLISH else Side.SELL_SIDE
 
 
 def select_target_level(

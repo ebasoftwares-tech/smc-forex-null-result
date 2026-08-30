@@ -856,7 +856,21 @@ class TpConfig(Frozen):
             "trades -- so it is not offered as a value at all."
         ),
     )
-    min_target_rank: float = Field(2.0, ge=0, description="FROZEN. SPEC 17.1, T2 only.")
+    min_target_rank: float = Field(
+        5.0,
+        ge=0,
+        description=(
+            "FROZEN. SPEC 17.1, T2 only. **Selected by its outcome on synthetic data "
+            "(D-019) -- read the provenance before citing this value.** Raised from 2.0 "
+            "by explicit instruction, on the ground that T2 arms 48 of 165 setups at 5.0 "
+            "against 5 at 2.0. That basis is what BACKTEST_PROTOCOL 10.2 prohibits, and "
+            "the fixture is a random walk on which the 10 resulting trades are noise, so "
+            "the number carries no evidence that 5.0 is right -- only that it is where "
+            "this fixture's targets sit far enough away to clear the 1.5 RR gate. The "
+            "old 2.0 was separately mis-scaled: rank spans [1.5, 6.0] with a median of "
+            "4.86, so it filtered almost nothing. Re-derive on real bars."
+        ),
+    )
     target_buffer_atr: float = Field(
         0.15,
         ge=0,

@@ -2094,7 +2094,15 @@ model S1 reads the sweep extreme: neither consumes an order block. So SPEC 13.8'
 requirement to report the agreement matrix alongside performance still cannot be exercised
 from the default config, and Phase 11's `M_eff = 1.77` has no end-to-end counterpart.
 
-### 3. A fifth default that cannot fire — and it is the one with a thesis in it
+### 3. A fifth default that cannot fire — **RETRACTED, see D-019**
+
+> **This section named the wrong cause and is superseded by D-019.** T2 armed nothing
+> because the engine never passed the liquidity book to the target gate, and because
+> `_opposing_side` was inverted — not because of `tp.min_target_rank`. The one-line
+> measurement that would have caught it (set the rank to 0 and see whether anything
+> changes: nothing did) was not taken before the cause was named. The paragraph below is
+> kept as written, because a retraction that edits away the original claim hides what the
+> mistake was. **T3's half of it stands**; only the T2 half was wrong.
 
 D-014 recorded four. **`tp.min_target_rank = 2.0` is a fifth**: T2 arms on **zero** setups,
 `NO_TARGET_AVAILABLE` on every one, because no opposing liquidity level ever reaches rank
@@ -2338,3 +2346,134 @@ and the Phase 9 funnel gate (passes on a projection, not a measurement).
 to make a result appear; moving one *before* any result exists is a different act, but it is
 still a specification change and belongs in a registration of its own. All four are listed
 as named new-registration triggers instead.
+
+---
+
+## D-019 — Two bugs behind T2, a retracted finding, and a default chosen by its outcome
+
+| | |
+|---|---|
+| **Date** | 2026-08-28 |
+| **Status** | ACTIVE |
+| **Trigger** | Instruction: *"fix `tp.min_target_rank` so T2 can arm"* |
+| **Supersedes** | D-017 §3, which named the wrong cause |
+
+### 1. The parameter was not the blocker, and one line proved it
+
+D-017 §3 reported `tp.min_target_rank = 2.0` as a fifth default that cannot fire, on top of
+D-014's four, because T2 rejected all 73 setups with `NO_TARGET_AVAILABLE`. **That
+diagnosis was wrong.** The rejection reason was read as the cause.
+
+The measurement that settles it costs one line: set `min_target_rank` to **0** and see
+what changes. Nothing does — the same 73 rejections — because the filter was never
+reached.
+
+> **A rejection reason names the gate that refused, not the reason it refused.**
+
+### 2. Bug one: the engine never gave the gate a book to filter
+
+`evaluate(..., levels=(), ranks=None)` defaults to empty, and neither `_pass_one` nor
+`run` passed either. `select_target_level` was iterating an empty sequence and returning
+`None` every time, so `min_target_rank` gated nothing at any value.
+
+`Market` did not even carry the book: `build_market` computed it, kept `len(book.levels)`
+as a funnel count, and discarded the rest.
+
+### 3. Bug two: `_opposing_side` was inverted, and its own docstring said so
+
+```python
+"""A long targets sell-side liquidity above; a short targets buy-side below."""
+return Side.SELL_SIDE if direction is Direction.BULLISH else Side.BUY_SIDE
+```
+
+`liquidity.Side` defines BUY_SIDE as the pool sitting **above** price, so *"sell-side
+liquidity above"* names something that cannot exist. "Opposing" means opposing to the side
+the setup **swept**: a bullish setup sweeps SELL_SIDE below and runs at the BUY_SIDE pool
+above.
+
+SPEC 17.1's worked example settles it — a BUY LIMIT off a swept `sweep_low`, targeting
+*"nearest opposing liquidity **PDH** 1.17240"*, and `period_levels` assigns a previous-day
+**high** to BUY_SIDE.
+
+**Six tests asserted the inversion**, which is why nothing caught it. The give-away was
+inside their own helper: every fixture level was built with `source=PREV_DAY_HIGH` and
+labelled `SELL_SIDE`, disagreeing with the source it claimed to come from.
+
+### 4. The book cannot be read causally, so it is snapshotted — the trap's third instance
+
+Handing the gate the finished `LiquidityBook` would have been a lookahead bug. SPEC 8.8's
+merge mutates a **surviving level in place**: `strength` gains the loser's, `tier` drops to
+the lower of the two, and `price` moves to the cluster extreme — and termination rewrites
+`status`. Asking a finished level what it looked like at bar 100 returns what it became by
+bar 1,600.
+
+This is D-009 §4's swing trap and D-011 §3's FVG trap **for the third time**, and the
+resolution is the same shape: capture the state *at* the bar rather than reconstruct it.
+`LevelSnapshot` is a frozen `(id, side, price, rank, tier, strength)` taken at the end of
+`on_bar_close`, after merge and prune, so it is the settled end-of-bar view. Capped by SPEC
+8.9's `max_active_levels = 40`, so it is tens of small objects per bar rather than a copy
+of the book.
+
+**Both passes gate against the arming bar's snapshot**, not the fill bar's. The target is
+part of the plan formed at arming, and pass two re-runs the gate over that plan; reading a
+later book there would let the two passes disagree about whether the same setup had a
+target — a disagreement about a price nobody has paid.
+
+The test asserts the snapshot **differs** from the finished book, because a test that
+passed either way would prove nothing.
+
+### 5. What T2 was actually blocked by
+
+With the gate able to see the book, over three fixture years and 165 setups:
+
+| | armed | trades | dominant rejection |
+|---|---:|---:|---|
+| Before | 0 | 0 | `NO_TARGET_AVAILABLE` × 165 |
+| After, at `min_target_rank` = 2.0 | 5 | 0 | `RR_BELOW_MIN` × 130 |
+
+So T2's real constraint is **SPEC 17.2's RR gate**: the nearest qualifying opposing level
+is usually closer than `min_rr` = 1.5. That is the gate working exactly as specified —
+`below_min_rr_action = skip` exists so that a structural target too close to justify the
+risk is skipped rather than replaced by a fixed one.
+
+`NO_TARGET_AVAILABLE` fell from 165 to 14.
+
+### 6. The default was then raised 2.0 → 5.0, and it was selected by its outcome
+
+**Recorded plainly because the basis is the one `BACKTEST_PROTOCOL.md` §10.2 prohibits.**
+
+The choice was put explicitly, with three options and their bases, and the instruction was
+to take 5.0 — the value at which T2 arms 48 of 165 setups and produces 10 trades, against
+5 and 0 at the default. That selection criterion is *the outcome on the data*, and on a
+random walk those 10 trades are noise. **The number carries no evidence that 5.0 is
+right**, only that it is where this fixture's targets sit far enough away to clear the RR
+gate.
+
+Two things make it less bad than it sounds, and neither rescues it:
+
+- **There is a separate, outcome-independent case that 2.0 was wrong.** `rank` =
+  `tier_weight(1–3) + 0.5 × min(strength, 4) + recency(0–1)`, so it spans **[1.5, 6.0]**
+  and measures a median of **4.86** over 107,882 level-bars. A threshold of 2.0 sits
+  essentially at the floor and filtered almost nothing — it was mis-scaled against the
+  function it gates, whatever the right replacement is.
+- **No result depends on it yet.** No out-of-sample evaluation has occurred, so this is the
+  cheapest possible moment to re-register; §10.2's prohibition bites hardest when a result
+  is already on the page, and there is none.
+
+The provenance is written into four places so the value cannot later be cited as reasoned:
+the schema field description, `defaults.yaml`, the ablation matrix's own spec note, and
+`PRE_REGISTRATION.md` §11's re-registration record.
+
+**Blast radius is contained and was checked, not assumed.** `min_target_rank` is read only
+by `select_target_level`, which only T2 reaches; the T1 baseline is byte-identical at 149
+armed and 37 trades before and after. What changes is `config_hash`, for every run, which
+is correct — `PARAMETERS.md` §5.3: *"every result carries its `config_hash`"*.
+
+### 7. Change control
+
+`PARAMETERS.md` §5.2: *"Changing a FROZEN default starts a new study with a new
+pre-registration"*, and `PRE_REGISTRATION.md` §10 names this exact change as a
+new-registration trigger. Honoured: the pre-registration is superseded at **v1.1**, with
+the old blob hash recorded, the reason stated, and the provenance carried in full. Its own
+rule that nothing may change after the first OOS evaluation is not engaged, because there
+has not been one.

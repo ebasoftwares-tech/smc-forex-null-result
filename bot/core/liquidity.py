@@ -574,6 +574,36 @@ def range_levels(series: BarSeries, cfg: AppConfig, start_seq: int) -> list[Liqu
 # ------------------------------------------------------------------------- engine
 
 
+@dataclass(frozen=True, slots=True)
+class LevelSnapshot:
+    """One ACTIVE level, as it stood at the close of one bar.
+
+    **This type exists because the finished book cannot be read causally at all.**
+    ``LiquidityLevel`` is mutable and SPEC 8.8's merge rewrites three of the four fields a
+    target selector reads: the survivor's ``strength`` gains the loser's, its ``tier``
+    drops to the lower of the two, and its ``price`` moves to the cluster extreme. Asking
+    a finished level what it looked like at bar 100 therefore returns what it became by
+    bar 1,600 -- and its ``status`` has the same problem, which is the trap D-009 section 4
+    recorded for swings and D-011 section 3 recorded for FVGs. This is the third instance.
+
+    So the state is captured *at* the bar, by the engine that is standing on it, and never
+    reconstructed afterwards. ``is_active`` is a constant because only active levels are
+    captured, which lets a snapshot stand in for a ``LiquidityLevel`` wherever a selector
+    reads those four attributes.
+    """
+
+    id: str
+    side: Side
+    price: float
+    rank: float
+    tier: int
+    strength: int
+
+    @property
+    def is_active(self) -> bool:
+        return True
+
+
 @dataclass
 class LiquidityBook:
     """The result of a run: every level ever created, plus the live view."""
@@ -583,6 +613,16 @@ class LiquidityBook:
     levels: list[LiquidityLevel] = field(default_factory=list)
     pruned: int = 0
     merged: int = 0
+    #: Per-bar causal view, keyed by H4 bar index. See :class:`LevelSnapshot`.
+    snapshots: dict[int, tuple["LevelSnapshot", ...]] = field(default_factory=dict)
+
+    def active_at(self, bar: int) -> tuple["LevelSnapshot", ...]:
+        """The levels a live engine held at the close of ``bar``."""
+        return self.snapshots.get(bar, ())
+
+    def ranks_at(self, bar: int) -> dict[str, float]:
+        """SPEC 8.8 rank per active level at ``bar``, in the shape the gate wants."""
+        return {s.id: s.rank for s in self.snapshots.get(bar, ())}
 
     def active(self) -> list[LiquidityLevel]:
         return [l for l in self.levels if l.is_active]
@@ -831,7 +871,23 @@ class LiquidityEngine:
         self._age_and_expire(i, at)
         self._merge(i, at)
         self._prune(i, at)
+        # Last, so the snapshot is the settled end-of-bar state: a level merged away or
+        # pruned on this bar is gone from it, and a survivor carries the price and
+        # strength the merge just gave it.
+        self._snapshot(i)
         return added
+
+    def _snapshot(self, i: int) -> None:
+        """Freeze the active book at bar ``i``. Capped at ``max_active_levels`` (40), so
+        this is a few tens of small objects per bar rather than a copy of the book."""
+        self.book.snapshots[i] = tuple(
+            LevelSnapshot(
+                id=lvl.id, side=lvl.side, price=lvl.price, rank=self.rank(lvl, i),
+                tier=lvl.tier, strength=lvl.strength,
+            )
+            for lvl in self.book.levels
+            if lvl.is_active
+        )
 
     def run(self) -> LiquidityBook:
         for i in range(self.series.n):

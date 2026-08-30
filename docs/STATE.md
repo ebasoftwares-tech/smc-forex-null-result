@@ -59,7 +59,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 8 | Displacement + FVG detection | `reports/phase8_gate.md` | 8/8 |
 | 9 | CHoCH reference selection, MSS confirmation, **the funnel** | `reports/phase9_gate.md` | **9/10 on real bars — the development-set half of the gate FAILS**, see §3 and D-020 |
 | — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, run out of order) | `reports/marginal_value.md` | 8/8 — instrument validated, **H5 open** |
-| 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 — two spec corrections, see D-011 |
+| 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 **on real bars** — **EQUIVALENT: no standalone FVG edge**, the project's first meaningful null, see D-023 |
 | 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 **on real bars** — four variants are worth **1.68 tests**, see D-022 |
 | 12 | Entry engine — five models, fill resolution against M1 | `reports/phase12_gate.md` | 8/8 — a "conservative" fill default that was neither, see D-013 |
 | 13 | Risk — stops S1–S4, the RR gate, sizing, limits | `reports/phase13_gate.md` | 8/8 — **four defaults that cannot fire**, see D-014 |
@@ -420,7 +420,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-022 record corrections and findings from each phase's implementation.
+D-004 through D-023 record corrections and findings from each phase's implementation.
 **D-020 is the one to read first**: it is the only entry written against real bars, and
 it is the one that turned Phase 9's PASS into a FAIL.
 
@@ -504,6 +504,9 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 70 | **SPEC 6.6 versus 11.5 now decides a gate verdict.** 87 of 368 MSS fail the leg clause 11.5 omits, so adopting 6.6 takes the universe to 281 and both halves fail. D-009 priced it as cost-free on synthetic data; it is not cost-free now (D-020 §4). |
 | 71 | **The OB edge study is answerable on the universe and not on the development set.** 492 OB-A touches in-sample, of which 135 are on the three development symbols against the 155 that h=1 alone needs. h=6 and h=12 are out of reach even universe-wide. Same shape as D-020: the pooled number passes and the set iteration happens on does not (D-022 §3). |
 | 72 | **The null calibration is calibrated on real bars and was not on synthetic** — 5.6% over 3,000 shuffles, 1.6 sigma, CI containing alpha, because the pooled sample is 492 touches rather than a few dozen. The bootstrap's under-coverage was a small-sample artefact, so real-bar UNDERPOWERED verdicts are trustworthy rather than understated (D-022 §4). |
+| 73 | **There is no standalone FVG edge, measured on real bars** — EQUIVALENT at h=1, 3, 6 and 12 over 7,800 touches, every interval inside the declared +/-0.25 ATR. This is the project's **first null that is about the market rather than the fixture**. It does *not* say `disp.require_fvg` or entry model C are worthless: those use a gap as displacement evidence and as a price to bid at, neither of which is what was tested (D-023). |
+| 74 | **A report whose prose was written for the fixture will state a real-data result backwards.** Phase 10's first real run printed "on a random walk the true effect is zero by construction" underneath a genuine market null, and printed "INVALIDATED is zero on this fixture" directly under a paragraph reporting 19 of them. Grep every generated report for `random walk` and `fixture` after pointing a script at real data (D-023 §5). |
+| 75 | **Components of this strategy are not equally measurable, and the two the design rests on are the hardest.** Over the same in-sample split: 7,800 FVG touches, 492 OB touches, 368 MSS events. The FVG concept gets ~21x the sample the MSS chain does, so a confident null about FVGs and an underpowered shrug about MSS are what the data supports, not a statement about which component matters (D-023 §3). |
 
 ---
 
@@ -599,9 +602,9 @@ caught it. Four mutations were run against the new suite and all four are now ca
 ## 8. The honest limitation
 
 **Most numbers in this file still come from a synthetic random walk.** Real bars landed
-on 2026-08-30; **Phase 9** (§3, D-020) and **Phase 11** (D-022) have been re-run on them,
-and every other report below is still the fixture until it is re-run too. The fixture has
-no liquidity, no participants and no structure, so:
+on 2026-08-30; **Phase 9** (§3, D-020), **Phase 10** (D-023) and **Phase 11** (D-022)
+have been re-run on them, and every other report below is still the fixture until it is
+re-run too. The fixture has no liquidity, no participants and no structure, so:
 
 - Sweep counts, rates, distributions, rejection rates and now the MSS funnel are
   properties of *the detectors meeting noise*. They prove the engines are deterministic,
@@ -617,11 +620,12 @@ no liquidity, no participants and no structure, so:
 - **The H5 study validates its own instrument and nothing else.** A `DIFFERENT` verdict
   on this fixture would mean it is broken. Its power arithmetic is the one output that
   transfers (§3a).
-- **Phase 10's FVG edge test is in the same position**, with one difference worth
-  carrying: its population is ~18x larger, so unlike H5 it will be **answerable at every
-  horizon on real data**. Its fill-rate curve is the number most likely to fall when real
-  bars arrive — a random walk returns to a local extreme readily and a trending market
-  may not.
+- **Phase 10 has left this list, and it is the one that produced an answer.** Both of
+  its predictions were checked on real bars (D-023): it *was* answerable at every
+  horizon — 7,800 touches, all four intervals inside the margin, verdict **EQUIVALENT**
+  — and its fill-rate curve *half* fell, early but not at 30 bars. **A resolved null on
+  real data is the first result in this project that is about the market rather than
+  about the fixture.**
 
 - **Phase 13's numbers split cleanly into three kinds**, and only the first two are worth
   anything yet. *Arithmetic* (the four unreachable defaults, the cap crossovers, the
@@ -736,9 +740,11 @@ arithmetic assumed.
 2. ~~**`scripts/phase11_report.py`**~~ — **DONE, 2026-08-30 (D-022).** `M_eff` = **1.68**
    on real bars against the fixture's 1.77 — it transferred, which almost nothing else
    here has. Use 1.68 in every correction. Takes ~9 minutes.
-3. **`scripts/phase10_report.py`** and **`scripts/marginal_value_report.py`** — the two
-   edge tests. Their instruments are validated and their power arithmetic recomputes
-   itself from the real return variance, which is the number most likely to move.
+3. ~~**`scripts/phase10_report.py`**~~ — **DONE, 2026-08-30 (D-023).** EQUIVALENT at
+   every horizon on 7,800 touches: no standalone FVG edge. **`scripts/marginal_value_report.py`**
+   (H5) is still to run, and D-020's 368 MSS is the population it has to work with —
+   §3a's arithmetic said 804 were needed at h=12, so expect UNDERPOWERED there and
+   decide in advance which horizons it is allowed to answer.
 4. **`scripts/phase12_report.py`** — the two things the continuous fixture cannot show:
    SPEC 15.3's lookahead (worth 10–30% of headline return per the spec, and exactly
    0.0000 ATR here) and the gap-past-the-stop branch. Both are pure gap effects. The S4

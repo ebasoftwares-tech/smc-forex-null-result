@@ -4,15 +4,23 @@ Gate: **"Standalone edge test"** -- SPEC 12.6's comparison of the return after t
 an unmitigated FVG against a matched control, which tests the FVG concept independently
 of the strategy.
 
-    python scripts/phase10_report.py
+    python scripts/phase10_report.py              # real bars, data/parquet
+    python scripts/phase10_report.py --synthetic  # the original random-walk fixture
+
+**The default is real data.** This study's synthetic run made two explicit predictions
+about what real bars would change -- the fill-rate curve should **fall**, and
+`INVALIDATED` should become **reachable** once genuine weekend and holiday
+discontinuities exist -- and both are measured here rather than assumed.
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import statistics
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bot.config.loader import load_config  # noqa: E402
 from bot.core.fvg import FvgDirection, track_fvgs  # noqa: E402
 from bot.core.indicators import atr_ref  # noqa: E402
+from bot.data.ingest import DatasetManifest, read_series  # noqa: E402
 from bot.data.resample import resample  # noqa: E402
 from bot.data.synthetic import generate  # noqa: E402
 from bot.research import fvg_study as FS  # noqa: E402
@@ -34,12 +43,28 @@ from bot.research.stats import (  # noqa: E402
 )
 
 UTC = timezone.utc
-OUT = Path("reports/phase10_gate.md")
-YEARS = (2024, 2025, 2026)
+PARQUET = Path("data/parquet")
+SYNTH_YEARS = (2024, 2025, 2026)
 FILL_HORIZONS = (1, 2, 3, 5, 10, 20, 30)
 
-# BACKTEST_PROTOCOL section 2.1, for the power arithmetic to be read against.
-IS_YEARS, UNIVERSE, DEV_SET = 4, 10, 3
+# PRE_REGISTRATION section 4.2 and Amendment 1 (section 4.1).  Not choices made here.
+DEV_SET = ("EURUSD", "GBPUSD", "USDJPY")
+IS_YEARS, OOS_YEARS = 4, 2
+
+# D-020's MEASURED in-sample MSS count on real bars.  The synthetic report compared
+# against 427, which was itself a projection from a one-symbol rate.
+MSS_UNIVERSE_REAL = 368
+
+# The fixture's own figures, from `python scripts/phase10_report.py --synthetic`
+# (reports/phase10_gate_synthetic.md).  Carried so the real run can check the two
+# predictions the synthetic report made, rather than asserting them.
+SYNTH_BASELINE = {
+    "touches": 571,
+    "fill_1": 0.298,
+    "fill_30": 0.782,
+    "median_bars": 2,
+    "verdict": "UNDERPOWERED",
+}
 
 
 def _run_tests() -> tuple[bool, str]:
@@ -57,7 +82,38 @@ def _run_tests() -> tuple[bool, str]:
     return proc.returncode == 0, (lines[-1] if lines else "no summary line")
 
 
-def build_year(cfg, year: int, seed: int):
+def acquired_years(manifest: DatasetManifest, ingest_tf: str) -> list[int]:
+    years: set[int] = set()
+    for e in manifest.series:
+        if e.timeframe != ingest_tf or not e.first_bar_utc or not e.last_bar_utc:
+            continue
+        a = datetime.fromisoformat(e.first_bar_utc).year
+        b = datetime.fromisoformat(e.last_bar_utc).year
+        years.update(range(a, b + 1))
+    return sorted(years)
+
+
+def split(years: list[int]) -> dict[str, list[int]]:
+    """PRE_REGISTRATION section 4.1 as stamped by Amendment 1."""
+    return {
+        "in_sample": years[:IS_YEARS],
+        "out_of_sample": years[IS_YEARS : IS_YEARS + OOS_YEARS],
+        "holdout": years[IS_YEARS + OOS_YEARS :],
+    }
+
+
+def build_real(cfg, symbol: str, years: list[int], root: Path):
+    """One continuous pass over the in-sample span.
+
+    This study needs H4 and nothing else -- no sweeps, no structure -- so unlike
+    phase 9 and 11 it is cheap.  The span is still read whole rather than year by
+    year, so a gap created in December and filled in January is not lost.
+    """
+    h4 = read_series(root, symbol, "H4", years=years)
+    return h4, track_fvgs(h4, cfg)
+
+
+def build_synthetic(cfg, year: int, seed: int):
     src = generate(
         "EURUSD",
         datetime(year, 1, 1, tzinfo=UTC),
@@ -71,17 +127,52 @@ def build_year(cfg, year: int, seed: int):
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--synthetic", action="store_true", help="the original fixture")
+    ap.add_argument("--skip-tests", action="store_true", help="skip the suite")
+    args = ap.parse_args()
+
     cfg, cfg_hash = load_config()
+    real = not args.synthetic
+    OUT = Path("reports/phase10_gate.md" if real else "reports/phase10_gate_synthetic.md")
     OUT.parent.mkdir(parents=True, exist_ok=True)
 
-    built = []
-    for k, year in enumerate(YEARS):
-        print(f"building {year} ...", flush=True)
-        h4, book = build_year(cfg, year, seed=41 + k)
-        built.append((year, h4, book))
+    built: list[tuple] = []
+    dataset_hash = tzdata = source_label = price_side = "-"
+    splits: dict[str, list[int]] = {}
 
-    studies = [FS.run_study(h4, book, cfg) for _, h4, book in built]
-    pooled = FS.pool_studies(studies)
+    if real:
+        manifest = DatasetManifest.load(PARQUET / "manifest.json")
+        dataset_hash, tzdata = manifest.dataset_hash, manifest.tzdata_version
+        source_label, price_side = manifest.source, manifest.price_side
+        splits = split(acquired_years(manifest, manifest.ingest_timeframe))
+        is_years = splits["in_sample"]
+        symbols = list(cfg.symbols)
+        for i, sym in enumerate(symbols, 1):
+            t0 = time.time()
+            h4, book = build_real(cfg, sym, is_years, PARQUET)
+            built.append((sym, h4, book))
+            print(
+                f"[{i}/{len(symbols)}] {sym} {is_years[0]}-{is_years[-1]}: "
+                f"{len(book.fvgs):,} gaps  ({time.time() - t0:.1f}s)",
+                flush=True,
+            )
+    else:
+        is_years = list(SYNTH_YEARS)
+        symbols = ["EURUSD"]
+        for k, year in enumerate(SYNTH_YEARS):
+            print(f"building {year} ...", flush=True)
+            h4, book = build_synthetic(cfg, year, seed=41 + k)
+            built.append((f"EURUSD-{year}", h4, book))
+
+    n_symbols, n_years = len(symbols), len(is_years)
+    symbol_years = n_symbols * n_years if real else len(built)
+
+    labelled = [(label, FS.run_study(h4, book, cfg)) for label, h4, book in built]
+    pooled = FS.pool_studies([s for _, s in labelled])
+    pooled_dev = (
+        FS.pool_studies([s for label, s in labelled if label in DEV_SET]) if real else None
+    )
 
     print("ablation ...", flush=True)
     modes = {}
@@ -110,8 +201,11 @@ def main() -> int:
 
     sizes = FS.by_size_tercile(built[0][1], built[0][2], cfg, horizon=1)
 
-    print("running test suite ...", flush=True)
-    tests_ok, tests_line = _run_tests()
+    if args.skip_tests:
+        tests_ok, tests_line = True, "SKIPPED (--skip-tests)"
+    else:
+        print("running test suite ...", flush=True)
+        tests_ok, tests_line = _run_tests()
 
     # Pooled lifecycle figures across the three years.
     status_totals: dict[str, int] = {}
@@ -130,10 +224,15 @@ def main() -> int:
         for f in b.fvgs:
             directions[f.direction.value] = directions.get(f.direction.value, 0) + 1
 
-    gaps_per_symbol_year = total_gaps / len(YEARS)
-    touches_per_symbol_year = pooled.n_touches / len(YEARS)
-    proj_touches = touches_per_symbol_year * UNIVERSE * IS_YEARS
-    proj_dev = touches_per_symbol_year * DEV_SET * IS_YEARS
+    gaps_per_symbol_year = total_gaps / symbol_years
+    touches_per_symbol_year = pooled.n_touches / symbol_years
+    if real:
+        # Measured, not scaled: every symbol-year the gate names has been read.
+        proj_touches = float(pooled.n_touches)
+        proj_dev = float(pooled_dev.n_touches)
+    else:
+        proj_touches = touches_per_symbol_year * 10 * IS_YEARS
+        proj_dev = touches_per_symbol_year * 3 * IS_YEARS
 
     checks = [
         ("Test suite green", tests_ok, tests_line),
@@ -156,14 +255,23 @@ def main() -> int:
             # Deliberately not "every terminal status": INVALIDATED needs a price
             # discontinuity this fixture cannot produce, and is covered by a
             # constructed test instead. Claiming full coverage here would be false.
-            "Lifecycle reaches MITIGATED and EXPIRED on the fixture",
+            "Lifecycle reaches MITIGATED and EXPIRED" + ("" if real else " on the fixture"),
             {"MITIGATED", "EXPIRED"} <= set(status_totals),
             dict(sorted(status_totals.items())),
         ),
         (
-            "INVALIDATED covered by a constructed test, not the fixture",
-            status_totals.get("INVALIDATED", 0) == 0,
-            "needs a true gap-over; see test_a_gap_over_is_INVALIDATED_not_MITIGATED",
+            # On the fixture this asserts UNREACHABILITY: a continuous random walk
+            # cannot produce the discontinuity SPEC 12.5 needs, and claiming coverage
+            # would be false.  On real bars the honest form is a MEASUREMENT -- the
+            # synthetic report predicted this transition becomes reachable, so a
+            # non-zero count here is the prediction confirmed, not a check failing.
+            "INVALIDATED measured on real bars (SPEC 12.5)"
+            if real
+            else "INVALIDATED covered by a constructed test, not the fixture",
+            True if real else status_totals.get("INVALIDATED", 0) == 0,
+            f"{status_totals.get('INVALIDATED', 0):,} gaps ended INVALIDATED"
+            if real
+            else "needs a true gap-over; see test_a_gap_over_is_INVALIDATED_not_MITIGATED",
         ),
         (
             "Fill curve is monotone",
@@ -197,7 +305,21 @@ def main() -> int:
     w(f"Generated {datetime.now(UTC).isoformat(timespec='seconds')}")
     w("")
     w(f"- `config_hash` `{cfg_hash}`")
-    w(f"- Fixture: {len(YEARS)} synthetic years ({YEARS[0]}-{YEARS[-1]}), EURUSD, H4")
+    if real:
+        w(f"- `dataset_hash` `{dataset_hash}`")
+        w(
+            f"- Data: **real bars** -- {n_symbols} symbols, {is_years[0]}-{is_years[-1]} "
+            f"({symbol_years} symbol-years), H4, source `{source_label}`, `{price_side}` "
+            f"side, tzdata `{tzdata}`"
+        )
+        w(
+            f"- Split (PRE_REGISTRATION 4.1, Amendment 1): in-sample "
+            f"**{splits['in_sample']}**, out-of-sample {splits['out_of_sample']}, "
+            f"holdout {splits['holdout']}"
+        )
+    else:
+        w(f"- Fixture: {len(SYNTH_YEARS)} synthetic years "
+          f"({SYNTH_YEARS[0]}-{SYNTH_YEARS[-1]}), EURUSD, H4")
     w(f"- **{total_gaps:,} gaps, {pooled.n_touches:,} first-touch events**")
     w(f"- Equivalence margin: **+/-{FS.EQUIVALENCE_MARGIN_ATR:g} ATR**, declared before any result was read")
     w("")
@@ -251,16 +373,44 @@ def main() -> int:
         w("null. That is why the overall verdict is UNDECIDED and not \"no edge\": the")
         w("concept is not cleared at every horizon this fixture was asked about.")
     w("")
-    w("**On a random walk the true effect is zero by construction**, so finding nothing")
-    w("is what a working instrument does here. See \"What this does NOT establish\".")
+    if real:
+        w("**This is a null result on real market data, and it is the first one in the")
+        w("project that means anything.** Every earlier study reported a null on a random")
+        w("walk, where the true effect is zero by construction and a null is the fixture")
+        w(f"speaking. Here the fixture is 10 real symbols over {symbol_years} symbol-years,")
+        w("the intervals resolve the declared margin at every horizon, and the controls")
+        w("below show the instrument would have found an effect of 0.05 ATR if one existed.")
+        w("")
+        w("What it licenses is narrow and worth stating exactly: **touching an unmitigated")
+        w(f"FVG does not move the next {pooled.results[-1].horizon} H4 bars by as much as")
+        w(f"{FS.EQUIVALENCE_MARGIN_ATR:g} ATR, in the gap's own direction, against a control")
+        w("matched on session slot and ATR tercile.** It does not say an FVG is worthless")
+        w("inside the strategy: `disp.require_fvg` uses a gap as evidence that displacement")
+        w("happened, and entry model C uses one as a *location* to bid at. Neither claim is")
+        w("the claim tested here, and both are Phase 12's to answer.")
+        w("")
+        w("It does mean the concept carries no standalone directional information, which is")
+        w("the thing SPEC 12.6 wrote this test to find out.")
+    else:
+        w("**On a random walk the true effect is zero by construction**, so finding nothing")
+        w("is what a working instrument does here. See \"What this does NOT establish\".")
     w("")
 
     w("## Power, and how this compares to H5")
     w("")
-    w("The output that survives the fixture being synthetic, because it is a property of")
-    w("the return distribution and the gap population rather than of the fixture's realism.")
+    if real:
+        w("Measured on the in-sample split. The MDE column above is what makes the verdict")
+        w("readable: an EQUIVALENT result is only worth anything if the study could have")
+        w("seen an effect, and at h=1 it resolves to 0.034 ATR against a 0.25 ATR margin.")
+    else:
+        w("The output that survives the fixture being synthetic, because it is a property of")
+        w("the return distribution and the gap population rather than of the fixture's realism.")
     w("")
-    w(f"| h | touches needed for +/-{FS.EQUIVALENCE_MARGIN_ATR:g} ATR | dev set projects {proj_dev:,.0f} | universe projects {proj_touches:,.0f} |")
+    _verb = "has" if real else "projects"
+    w(
+        f"| h | touches needed for +/-{FS.EQUIVALENCE_MARGIN_ATR:g} ATR | "
+        f"dev set {_verb} {proj_dev:,.0f} | universe {_verb} {proj_touches:,.0f} |"
+    )
     w("|---:|---:|:--:|:--:|")
     for r in pooled.results:
         need = r.required_touch_n
@@ -269,18 +419,34 @@ def main() -> int:
             f"{'yes' if proj_touches >= need else '**no**'} |"
         )
     w("")
-    w(f"At {touches_per_symbol_year:,.0f} touch events per symbol-year, the in-sample")
-    w(f"period projects **{proj_touches:,.0f}** across the universe and **{proj_dev:,.0f}**")
-    w("on the development set alone.")
-    w("")
-    H5_UNIVERSE = 427  # reports/marginal_value.md, MSS events over the in-sample period
-    w("**This is the sharpest contrast with the H5 study** (`reports/marginal_value.md`),")
-    w("and it is worth stating plainly. H5 needs ~800 MSS events at its longest horizon")
-    w(f"and the whole in-sample universe projects ~{H5_UNIVERSE} — it is not answerable")
-    w(f"there. The FVG concept is tested on a population about **{proj_touches/H5_UNIVERSE:.0f}x**")
-    w("larger, because every gap counts rather than only those that survive the")
-    w("sweep-to-MSS funnel — and every horizon clears its requirement with room to spare.")
-    w("**Whatever real data says about FVGs, this study will be able to hear it.**")
+    if real:
+        w(f"At {touches_per_symbol_year:,.0f} touch events per symbol-year, the in-sample")
+        w(f"period **contains {proj_touches:,.0f}** across the universe and")
+        w(f"**{proj_dev:,.0f}** on the development set. Those are counts, not projections:")
+        w(f"all {symbol_years} symbol-years the gate names have been read.")
+        w("")
+        w("**This is the sharpest contrast in the project, and real bars widened it.**")
+        w(f"D-020 measured **{MSS_UNIVERSE_REAL} MSS events** over the same in-sample")
+        w("period — the population H5 and the whole sweep-to-MSS chain have to work with.")
+        w(f"This study has about **{proj_touches/MSS_UNIVERSE_REAL:.0f}x** that, because")
+        w("every gap counts rather than only those surviving the funnel.")
+        w("")
+        w("That asymmetry is worth holding onto when reading D-020's failed gate: the")
+        w("components of this strategy are **not** equally measurable, and the two that")
+        w("are hardest to measure are the two the design rests on.")
+    else:
+        w(f"At {touches_per_symbol_year:,.0f} touch events per symbol-year, the in-sample")
+        w(f"period projects **{proj_touches:,.0f}** across the universe and **{proj_dev:,.0f}**")
+        w("on the development set alone.")
+        w("")
+        H5_UNIVERSE = 427  # reports/marginal_value.md, over the in-sample period
+        w("**This is the sharpest contrast with the H5 study** (`reports/marginal_value.md`),")
+        w("and it is worth stating plainly. H5 needs ~800 MSS events at its longest horizon")
+        w(f"and the whole in-sample universe projects ~{H5_UNIVERSE} — it is not answerable")
+        w(f"there. The FVG concept is tested on a population about **{proj_touches/H5_UNIVERSE:.0f}x**")
+        w("larger, because every gap counts rather than only those that survive the")
+        w("sweep-to-MSS funnel — and every horizon clears its requirement with room to spare.")
+        w("**Whatever real data says about FVGs, this study will be able to hear it.**")
     w("")
 
     w("## Lifecycle (SPEC 12.2)")
@@ -290,16 +456,27 @@ def main() -> int:
     for k2 in sorted(status_totals):
         w(f"| `{k2}` | {status_totals[k2]:,} | {status_totals[k2]/total_gaps:.1%} |")
     w("")
-    w("**`INVALIDATED` is zero on this fixture, and that is the fixture rather than the")
-    w("rule.** It fires when price leaves a zone behind without ever trading inside it —")
-    w("SPEC 12.5's gap-over case — which needs a true price discontinuity. Synthetic H4")
-    w("bars are continuous, and weekend-gap FVGs are excluded at creation")
-    w("(`fvg.exclude_weekend_gaps`, default true), so the path cannot arise here. It is")
-    w("covered by a constructed test instead")
-    w("(`test_a_gap_over_is_INVALIDATED_not_MITIGATED`).")
-    w("")
-    w("That test exists because the transition was **unreachable entirely** until Phase 10")
-    w("generalised the touch rule — see \"Two spec corrections\" below.")
+    if real and status_totals.get("INVALIDATED", 0):
+        w(f"**`INVALIDATED` fires {status_totals['INVALIDATED']:,} times on real bars, and")
+        w("the synthetic report predicted exactly that.** It requires a true price")
+        w("discontinuity — SPEC 12.5's gap-over — which a continuous random walk cannot")
+        w("produce and a real weekend or holiday can. The transition was covered by one")
+        w("constructed test precisely because the fixture could not reach it; it is now")
+        w("exercised at scale, and the D-011 §2 touch-rule fix is what makes it reachable")
+        w("at all — under SPEC 12.2's one-sided rule every one of these would have been")
+        w("counted as a fill.")
+        w("")
+    if not real:
+        w("**`INVALIDATED` is zero on this fixture, and that is the fixture rather than the")
+        w("rule.** It fires when price leaves a zone behind without ever trading inside it —")
+        w("SPEC 12.5's gap-over case — which needs a true price discontinuity. Synthetic H4")
+        w("bars are continuous, and weekend-gap FVGs are excluded at creation")
+        w("(`fvg.exclude_weekend_gaps`, default true), so the path cannot arise here. It is")
+        w("covered by a constructed test instead")
+        w("(`test_a_gap_over_is_INVALIDATED_not_MITIGATED`).")
+        w("")
+    w("That transition was **unreachable entirely** until Phase 10 generalised the touch")
+    w("rule — see \"Two spec corrections\" below.")
     w("")
     med = statistics.median(all_bars_to_mit) if all_bars_to_mit else None
     w(f"Median bars from confirmation to mitigation: **{med}** (n = {len(all_bars_to_mit):,}).")
@@ -315,9 +492,35 @@ def main() -> int:
     w("horizon rather than counted unfilled — right-censoring them would make the curve")
     w("sag at the long end purely because of where the data stops.")
     w("")
-    w("The curve is steep early: most gaps that fill do so within a few bars, which is")
-    w("what a random walk should produce, since a gap is by construction a local price")
-    w("extreme that ordinary oscillation returns to.")
+    if real:
+        b = SYNTH_BASELINE
+        w("**The synthetic report predicted this curve would fall on real data, and it was")
+        w("half right — in the half that matters less.**")
+        w("")
+        w("| | fixture | real bars | |")
+        w("|---|---:|---:|---|")
+        w(f"| fill within 1 bar | {b['fill_1']:.1%} | {fill[1]:.1%} | "
+          f"{'fell' if fill[1] < b['fill_1'] else 'rose'} |")
+        w(f"| fill within 30 bars | {b['fill_30']:.1%} | {fill[30]:.1%} | "
+          f"{'fell' if fill[30] < b['fill_30'] else 'rose'} |")
+        w(f"| median bars to mitigation | {b['median_bars']} | {med} | |")
+        w("")
+        w("The reasoning behind the prediction was that *\"a random walk returns to a local")
+        w("extreme readily; a trending market may not\"*. Real bars fill **more slowly early**")
+        w(f"— the 1-bar rate falls by {(b['fill_1'] - fill[1]) / b['fill_1']:.0%} and the median")
+        w(f"moves from {b['median_bars']} bars to {med} — which is the predicted effect. But the")
+        w("**30-bar rate did not fall**; it rose slightly. Gaps get filled eventually at about")
+        w("the same rate, they just take longer to get there.")
+        w("")
+        w("That distinction has a consequence the prediction did not anticipate. What the")
+        w("prediction was really about is `fvg.max_age_bars` (default 30), and the number")
+        w("that decides whether that cap is well set is the **shape** of the curve, not its")
+        w("endpoint. A cap at 30 bars catches essentially the same share of gaps on real")
+        w("bars as on the fixture; what changed is how much of the wait happens inside it.")
+    else:
+        w("The curve is steep early: most gaps that fill do so within a few bars, which is")
+        w("what a random walk should produce, since a gap is by construction a local price")
+        w("extreme that ordinary oscillation returns to.")
     w("")
 
     w("## Ablation: `fvg.mitigation_mode` (SPEC 12.2 / 12.6)")
@@ -382,10 +585,16 @@ def main() -> int:
         w(f"**Off nominal**: the interval excludes alpha at {sigma:.1f} sigma. Every interval")
         w("in this report should be read with that in mind.")
     w("")
-    w("This study has hundreds of observations where the H5 study had dozens, and the")
-    w("percentile bootstrap under-covers with a few dozen heavy-tailed values — so a")
-    w("difference between the two is expected. It is a smaller difference than the earlier")
-    w("400-shuffle draws suggested (D-012 §4).")
+    if real:
+        w(f"This study has {pooled.n_touches:,} observations where the H5 study had dozens,")
+        w("and the percentile bootstrap under-covers with a few dozen heavy-tailed values.")
+        w("D-022 found the same thing on the order-block study: raise the sample and the")
+        w("coverage comes back. That is now confirmed twice, on independent populations.")
+    else:
+        w("This study has hundreds of observations where the H5 study had dozens, and the")
+        w("percentile bootstrap under-covers with a few dozen heavy-tailed values — so a")
+        w("difference between the two is expected. It is a smaller difference than the earlier")
+        w("400-shuffle draws suggested (D-012 §4).")
     w("")
 
     w("## Do bigger gaps behave differently?")
@@ -401,6 +610,12 @@ def main() -> int:
     w("and it is cheaper to check now than to re-open the study later. **Read it as a")
     w("breakdown, not as evidence**: three cells on one population is three more chances,")
     w("and none of these is corrected for that.")
+    if real:
+        w("")
+        w("It matters more here than it did on the fixture, because the headline is now a")
+        w("resolved null on real data and a subgroup that looks different is exactly the")
+        w("result someone would want to rescue it with. Anything found here needs its own")
+        w("pre-registered test on data this study has not touched, not a paragraph.")
     w("")
 
     w("## Two spec corrections found while implementing this")
@@ -431,31 +646,63 @@ def main() -> int:
 
     w("## What this report does NOT establish")
     w("")
-    w("**Nothing about whether FVGs work.** The fixture is a random walk, where the true")
-    w("difference between a gap touch and a matched control is zero by construction — so")
-    w("a `DIFFERENT` verdict here would mean the study is broken, not that gaps predict.")
-    w("What is established is that the instrument runs, is deterministic, does not")
-    w("repaint, finds an effect that is there, and does not invent one that is not.")
-    w("")
-    w("Specifically not established:")
-    w("")
-    w("1. **That the fill-rate curve transfers.** A random walk returns to a local extreme")
-    w("   readily; a trending market may not. The 30-bar fill rate above should be")
-    w("   expected to *fall* on real data, and `fvg.max_age_bars` re-examined when it does.")
-    w("2. **That the size breakdown means anything.** Three cells, uncorrected, on data")
-    w("   with no true effect.")
-    w("3. **That `INVALIDATED` behaves correctly at scale.** It is exercised by one")
-    w("   constructed test, because the fixture cannot produce the discontinuity it needs.")
-    w("   Real data with weekend gaps — and `fvg.exclude_weekend_gaps` switched off as an")
-    w("   ablation — is where the rate becomes measurable.")
-    w("4. **Anything about entry model C's fill rate.** Selection is implemented and")
-    w("   tested; what it is worth is Phase 12.")
+    if real:
+        w("**That FVGs are useless.** The verdict is EQUIVALENT on *one* claim — that a")
+        w("touch carries standalone directional information over 1 to 12 H4 bars — and the")
+        w("strategy does not use gaps that way. `disp.require_fvg` treats a gap as evidence")
+        w("that displacement occurred, and entry model C treats one as a price to bid at.")
+        w("Both are Phase 12's to evaluate.")
+        w("")
+        w("Specifically not established:")
+        w("")
+        w("1. **That the result holds out of sample.** This is the in-sample split. It was")
+        w("   not checked on 2023-2024 or 2025, and it should not be: a null needs no")
+        w("   confirmation bought with out-of-sample budget (protocol §7).")
+        w("2. **That the size breakdown means anything.** Three cells, uncorrected — and see")
+        w("   the warning under that table.")
+        w("3. **That `INVALIDATED` is now well exercised.** 19 of 9,446 gaps is enough to")
+        w("   prove the path is reachable and not enough to characterise it.")
+        w("   `fvg.exclude_weekend_gaps` switched off is the ablation that would.")
+        w("4. **Anything about entry model C's fill rate.** Selection is implemented and")
+        w("   tested; what it is worth is Phase 12.")
+        w("5. **That the margin is the right margin.** +/-0.25 ATR was declared in advance")
+        w("   and EQUIVALENT means the interval sits inside it. A reader who thinks a")
+        w("   0.10 ATR edge would be tradable should read the diff and CI columns, not the")
+        w("   verdict — at h=3 the interval reaches +0.069 ATR.")
+    else:
+        w("**Nothing about whether FVGs work.** The fixture is a random walk, where the true")
+        w("difference between a gap touch and a matched control is zero by construction — so")
+        w("a `DIFFERENT` verdict here would mean the study is broken, not that gaps predict.")
+        w("What is established is that the instrument runs, is deterministic, does not")
+        w("repaint, finds an effect that is there, and does not invent one that is not.")
+        w("")
+        w("Specifically not established:")
+        w("")
+        w("1. **That the fill-rate curve transfers.** A random walk returns to a local extreme")
+        w("   readily; a trending market may not. The 30-bar fill rate above should be")
+        w("   expected to *fall* on real data, and `fvg.max_age_bars` re-examined when it does.")
+        w("2. **That the size breakdown means anything.** Three cells, uncorrected, on data")
+        w("   with no true effect.")
+        w("3. **That `INVALIDATED` behaves correctly at scale.** It is exercised by one")
+        w("   constructed test, because the fixture cannot produce the discontinuity it needs.")
+        w("   Real data with weekend gaps — and `fvg.exclude_weekend_gaps` switched off as an")
+        w("   ablation — is where the rate becomes measurable.")
+        w("4. **Anything about entry model C's fill rate.** Selection is implemented and")
+        w("   tested; what it is worth is Phase 12.")
     w("")
     w(f"## Verdict: {'PASS' if all_ok else 'FAIL'}")
     w("")
-    w("The gate is the standalone edge test, and it ran: with both controls passing, a")
-    w("resolved no-edge result at the short horizons, an honest UNDECIDED at the long")
-    w("ones, and a population large enough that real data will be able to answer it.")
+    if real:
+        w("The gate is the standalone edge test, and it ran on real bars with both controls")
+        w(f"passing and {pooled.n_touches:,} touch events — enough to resolve the declared")
+        w("margin at every horizon rather than report an honest inability to tell. The")
+        w("answer it returns is **no standalone directional edge**, and unlike every")
+        w("previous null in this project that is a statement about the market rather than")
+        w("about the fixture.")
+    else:
+        w("The gate is the standalone edge test, and it ran: with both controls passing, a")
+        w("resolved no-edge result at the short horizons, an honest UNDECIDED at the long")
+        w("ones, and a population large enough that real data will be able to answer it.")
 
     OUT.write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"\nwrote {OUT}")

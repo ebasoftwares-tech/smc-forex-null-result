@@ -2870,3 +2870,139 @@ at h=1), where the fixture needed more.
 **nothing about `M_eff`'s stability across splits**: it is recomputed here on the in-sample
 years only, and it must *not* be recomputed on the out-of-sample or holdout years to check,
 because that spends out-of-sample budget on a nuisance parameter (protocol §7).
+---
+
+## D-023 — The FVG edge test on real bars: the project's first null that means something
+
+| | |
+|---|---|
+| **Date** | 2026-08-30 |
+| **Decided by** | Elie (instruction: *"run phase10_report on the real data"*) |
+| **Status** | ACTIVE |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample, H4 |
+| **Report** | `reports/phase10_gate.md` — 10/10 checks PASS; fixture retained at `reports/phase10_gate_synthetic.md` |
+
+### 1. EQUIVALENT at every horizon, and what that licenses
+
+| h | n touch | diff (ATR) | 95% CI | MDE | Verdict |
+|---:|---:|---:|---|---:|---|
+| 1 | 7,800 | +0.0111 | [-0.0126, +0.0347] | 0.034 | **EQUIVALENT** |
+| 3 | 7,796 | +0.0307 | [-0.0080, +0.0685] | 0.055 | **EQUIVALENT** |
+| 6 | 7,793 | +0.0342 | [-0.0194, +0.0885] | 0.079 | **EQUIVALENT** |
+| 12 | 7,788 | +0.0251 | [-0.0535, +0.1048] | 0.112 | **EQUIVALENT** |
+
+**Every previous null in this project was a null on a random walk**, where the true effect is
+zero by construction and the result is the fixture speaking. This one is not. Ten real
+symbols, 40 symbol-years, every interval inside the pre-declared ±0.25 ATR margin, and a
+positive control that detects an injected **+0.05 ATR** — so the study could have seen an
+effect a fifth the size of the margin and did not.
+
+`EQUIVALENT` is the only verdict in `stats.Verdict` that licenses the word "no", and it is
+earned here rather than defaulted into.
+
+**What it licenses, exactly:** touching an unmitigated FVG does not move the next 1 to 12 H4
+bars by as much as 0.25 ATR in the gap's own direction, against a control matched on session
+slot and ATR tercile.
+
+**What it does not license, and this matters more than the result:** the strategy does not use
+FVGs that way. `disp.require_fvg` uses a gap as *evidence that displacement occurred* — SPEC
+10.2 is explicit that it is the same condition expressed structurally, not an extra filter —
+and entry model C uses one as a *price to bid at*. Neither is a claim that a gap predicts
+direction. Both are Phase 12's to evaluate, and this result neither condemns nor clears them.
+
+A reader who thinks a 0.10 ATR edge would be tradable should read the diff and CI columns
+rather than the verdict: at h=3 the interval still reaches +0.069 ATR.
+
+### 2. `INVALIDATED` became reachable, exactly as predicted, and D-011 §2 is why
+
+The synthetic report listed `INVALIDATED` behaviour as something it explicitly could **not**
+establish: the transition needs a true price discontinuity, a continuous random walk cannot
+produce one, and it was covered by a single constructed test. Real bars have weekends and
+holidays:
+
+- **19 of 9,446 gaps end `INVALIDATED`** (0.2%), plus 2 `PARTIAL`, a status the fixture also
+  never reached.
+
+Two things follow. It is now exercised at scale rather than by one test — and **it is only
+reachable at all because of D-011 §2's touch-rule fix**. Under SPEC 12.2's one-sided rule,
+mitigation always won the race, so every one of these 19 would have been counted as a fill,
+silently inflating the fill-rate curve that is this phase's own deliverable. A correction made
+on a fixture that could not exercise it has now paid off on data that can.
+
+### 3. The population asymmetry is the finding to carry forward
+
+Over the **same in-sample split**:
+
+| Study | Population | Verdict it can support |
+|---|---:|---|
+| FVG touch (this) | **7,800** | EQUIVALENT at every horizon |
+| OB touch (D-022) | 492 | UNDERPOWERED everywhere; dev set answers nothing |
+| MSS events (D-020) | 368 | gate failed on the development half |
+
+**The FVG concept gets about 21× the sample the MSS chain does**, because every gap counts
+while an MSS has to survive the whole sweep-to-CHoCH-to-displacement funnel.
+
+That asymmetry has to be held in mind when reading these three results together. It would be
+easy — and wrong — to conclude "FVGs don't work, and MSS is unproven". What the data actually
+says is that **the components are not equally measurable, and the two the design rests on are
+the two hardest to measure.** A confident null about the cheap component and an underpowered
+shrug about the expensive one is a statement about sample sizes before it is a statement about
+markets.
+
+### 4. The fill-curve prediction was half right, in the half that matters less
+
+The synthetic report predicted the curve would **fall** on real data — *"a random walk returns
+to a local extreme readily; a trending market may not"*.
+
+| | fixture | real bars | |
+|---|---:|---:|---|
+| fill within 1 bar | 29.8% | 23.1% | fell 22% |
+| fill within 30 bars | 78.2% | 80.4% | **rose** |
+| median bars to mitigation | 2 | 3 | |
+
+Real bars fill **more slowly early** — the predicted effect — but the 30-bar rate did not
+fall. Gaps are filled eventually at about the same rate; they take longer to get there.
+
+The prediction was really about `fvg.max_age_bars` (default 30), and the distinction changes
+what it implies: a 30-bar cap catches essentially the same share of gaps on real bars as on
+the fixture, so **the cap does not need re-examining** — what changed is how much of the wait
+happens inside it, which is entry model C's problem rather than the lifecycle's.
+
+### 5. A report written for a fixture states a real-data result backwards
+
+Worth recording as process, because this is the third script pointed at real data and the
+first where the prose actually inverted the meaning.
+
+The first real run of this report printed, directly beneath an EQUIVALENT verdict on real
+market data:
+
+> *"On a random walk the true effect is zero by construction, so finding nothing is what a
+> working instrument does here."*
+
+— which says the exact opposite of what the result means. It also printed *"`INVALIDATED` is
+zero on this fixture"* in the paragraph immediately after one reporting 19 of them, and
+described the study's own power as *"the output that survives the fixture being synthetic"*.
+
+The numbers were right in every case; the sentences around them were written for a different
+dataset. **Grep every generated report for `random walk` and `fixture` after pointing a script
+at real data**, and make the prose branch on the source rather than assuming it. Phases 9 and
+11 needed the same treatment and got it while adapting them; this one only surfaced because
+the verdict itself changed.
+
+One gate check needed the same care rather than a re-word. *"INVALIDATED covered by a
+constructed test, not the fixture"* asserts `count == 0`, which is a true and useful statement
+about the fixture and becomes a **failing check on real bars precisely when the prediction
+comes true**. It now branches: unreachability on the fixture, a measurement on real bars. That
+is not a loosened gate — it is the same question asked of data that can answer it.
+
+### 6. What this does not establish
+
+**That the result holds out of sample.** This is the in-sample split and it was not checked on
+2023-2024 or 2025 — and should not be. A null needs no confirmation bought with out-of-sample
+budget (protocol §7).
+
+**That 19 `INVALIDATED` gaps characterise the path.** They prove it is reachable. The
+`fvg.exclude_weekend_gaps` ablation is what would measure it.
+
+**Anything about entry model C.** Selection is implemented and tested; what it is worth is
+Phase 12.

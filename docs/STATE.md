@@ -60,7 +60,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 9 | CHoCH reference selection, MSS confirmation, **the funnel** | `reports/phase9_gate.md` | **9/10 on real bars — the development-set half of the gate FAILS**, see §3 and D-020 |
 | — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, run out of order) | `reports/marginal_value.md` | 8/8 — instrument validated, **H5 open** |
 | 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 — two spec corrections, see D-011 |
-| 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 — **four variants are worth 1.77 tests**, see D-012 |
+| 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 **on real bars** — four variants are worth **1.68 tests**, see D-022 |
 | 12 | Entry engine — five models, fill resolution against M1 | `reports/phase12_gate.md` | 8/8 — a "conservative" fill default that was neither, see D-013 |
 | 13 | Risk — stops S1–S4, the RR gate, sizing, limits | `reports/phase13_gate.md` | 8/8 — **four defaults that cannot fire**, see D-014 |
 | 14 | Backtest engine — exits, costs, metrics, Monte Carlo | `reports/phase14_gate.md` | 10/10 — **four free lunches found and closed**, see D-015 |
@@ -420,7 +420,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-020 record corrections and findings from each phase's implementation.
+D-004 through D-022 record corrections and findings from each phase's implementation.
 **D-020 is the one to read first**: it is the only entry written against real bars, and
 it is the one that turned Phase 9's PASS into a FAIL.
 
@@ -456,7 +456,7 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 22 | **FVG touch is range INTERSECTION, not SPEC 12.2's one-sided inequality.** One-sided made `INVALIDATED` structurally unreachable and counted every gap-over as a fill (D-011 §2). |
 | 23 | **Use `Fvg.status_at(bar)`, never `Fvg.status`, to ask what was available at a past bar.** The field holds the end-of-run value; reading it is invisible lookahead (D-011 §3). |
 | 24 | **`track_fvgs` returns copies.** Detection output is shared with the displacement engine, which must not depend on whether the tracker ran (D-011 §3). |
-| 25 | **The four OB definitions are worth ~1.77 independent tests, not 4.** Use `M_eff` in the multiple-testing correction. Same-bar agreement *understates* redundancy — they pick different bars at almost the same price (D-012 §2). |
+| 25 | **The four OB definitions are worth `M_eff` = 1.68 independent tests, not 4** — measured on real bars, in-sample (D-022). The synthetic fixture said 1.77, so this is one of the very few numbers in the project that transferred. Use it in the multiple-testing correction. Same-bar agreement *understates* redundancy badly: OB-A and OB-D never pick the same bar and still correlate 0.925 on entry price (D-012 §2, D-022 §2). |
 | 26 | **Never centre a correlation on the per-observation mean across the variables being compared.** It pins the average pairwise correlation at `-1/(k-1)`. Anchor on something exogenous (D-012 §3a). |
 | 27 | **Galwey, not Li & Ji, for effective test counts.** Li & Ji is discontinuous at integer eigenvalues and returns ~2 for *perfectly* correlated variants because `eigvalsh` gives 3.999999999999999 (D-012 §3b). |
 | 28 | **Null calibrations run 3,000 shuffles and quote a Wilson interval.** At 400 the standard error is ~1.1 points, the same size as the effect; three draws of one calibration read 4.8%, 8.0% and 5.5% (D-012 §4). |
@@ -502,6 +502,8 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 68 | **EURUSD is the worst sweep→MSS converter of all ten majors** (1.11% against NZDUSD's 2.02%), so the development set is the thin end of the universe by construction. Adding symbols cannot fix the failing half; swapping the development set selects a split by its outcome and empties the cross-sectional test (D-020 §2). |
 | 69 | **No registered value of `choch.max_reference_distance_atr` clears the development gate** — {2.0, 3.0, 4.0} give 41 / 97 / 113 against 120, and only the unregistered 6.0 reaches it, exactly. On synthetic this parameter spanned the verdict; on real bars the rescue is not available (D-020 §3). |
 | 70 | **SPEC 6.6 versus 11.5 now decides a gate verdict.** 87 of 368 MSS fail the leg clause 11.5 omits, so adopting 6.6 takes the universe to 281 and both halves fail. D-009 priced it as cost-free on synthetic data; it is not cost-free now (D-020 §4). |
+| 71 | **The OB edge study is answerable on the universe and not on the development set.** 492 OB-A touches in-sample, of which 135 are on the three development symbols against the 155 that h=1 alone needs. h=6 and h=12 are out of reach even universe-wide. Same shape as D-020: the pooled number passes and the set iteration happens on does not (D-022 §3). |
+| 72 | **The null calibration is calibrated on real bars and was not on synthetic** — 5.6% over 3,000 shuffles, 1.6 sigma, CI containing alpha, because the pooled sample is 492 touches rather than a few dozen. The bootstrap's under-coverage was a small-sample artefact, so real-bar UNDERPOWERED verdicts are trustworthy rather than understated (D-022 §4). |
 
 ---
 
@@ -596,10 +598,10 @@ caught it. Four mutations were run against the new suite and all four are now ca
 
 ## 8. The honest limitation
 
-**Every number in this file except Phase 9's still comes from a synthetic random walk.**
-Real bars landed on 2026-08-30 and only the Phase 9 funnel has been re-run on them so far
-(§3, D-020); every other report below is still the fixture until it is re-run. The
-fixture has no liquidity, no participants and no structure, so:
+**Most numbers in this file still come from a synthetic random walk.** Real bars landed
+on 2026-08-30; **Phase 9** (§3, D-020) and **Phase 11** (D-022) have been re-run on them,
+and every other report below is still the fixture until it is re-run too. The fixture has
+no liquidity, no participants and no structure, so:
 
 - Sweep counts, rates, distributions, rejection rates and now the MSS funnel are
   properties of *the detectors meeting noise*. They prove the engines are deterministic,
@@ -731,9 +733,9 @@ arithmetic assumed.
 1. ~~**`scripts/phase9_report.py`**~~ — **DONE, 2026-08-30 (D-020).** The verdict went the
    way §3's ABLATION sensitivity warned it might: universe PASS, development set FAIL.
    Re-run after any change to the funnel; it now takes ~9 minutes.
-2. **`scripts/phase11_report.py`** — recompute `M_eff` for the OB definitions. It is a
-   property of how the four behave on *this* fixture; real bars have trends and gaps and
-   the definitions may diverge more there. Every later correction depends on this number.
+2. ~~**`scripts/phase11_report.py`**~~ — **DONE, 2026-08-30 (D-022).** `M_eff` = **1.68**
+   on real bars against the fixture's 1.77 — it transferred, which almost nothing else
+   here has. Use 1.68 in every correction. Takes ~9 minutes.
 3. **`scripts/phase10_report.py`** and **`scripts/marginal_value_report.py`** — the two
    edge tests. Their instruments are validated and their power arithmetic recomputes
    itself from the real return variance, which is the number most likely to move.

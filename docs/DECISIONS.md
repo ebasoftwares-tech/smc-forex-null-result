@@ -2755,3 +2755,118 @@ split boundary with the data in hand, which is the exact thing §4.1 exists to p
 backtest, as required. What that does not do is make the project's open questions smaller —
 D-020's failed development-set gate is unaffected by any of this, and Q1 (broker, account
 currency, the real spread and swap tables) is still open.
+---
+
+## D-022 — The OB bake-off on real bars: `M_eff` transferred, the answerability did not
+
+| | |
+|---|---|
+| **Date** | 2026-08-30 |
+| **Decided by** | Elie (instruction: *"run phase11_report on the real data"*) |
+| **Status** | ACTIVE |
+| **Updates** | D-012's `M_eff` = 1.77, which D-012 itself flagged as fixture-dependent |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample, H4 |
+| **Report** | `reports/phase11_gate.md` — 10/10 checks PASS |
+
+`STATE.md` §9's run order put this second, for a stated reason: `M_eff` is *"a property of
+how the four behave on this fixture"* and *"every later correction depends on this number"*.
+Recomputed on real bars, in-sample only.
+
+### 1. The number transferred, which almost nothing else in this project has
+
+| | Synthetic | Real bars |
+|---|---:|---:|
+| `M_eff` (four definitions) | 1.77 | **1.68** |
+| `M_eff` (OB-A/B/C only) | 1.36 | **1.36** |
+| Li & Ji, for contrast | ~2 | 2.00 |
+
+A 5% move on the headline and none at all on the A/B/C subset. **Use 1.68.** Correcting as
+though the four were independent over-corrects by 2.4×.
+
+That is worth recording as a *contrast*, not just an update. D-020 had just found the Phase 9
+projection overstating by 38% and 57%; the standing expectation after that was that
+fixture-derived numbers do not survive. This one did, and the reason is visible in §2: `M_eff`
+is a statement about how four rules relate **to each other**, and they are all reading the
+same displacement leg. That relationship is structural, so it is much less sensitive to
+whether the price series trends than a rate or a count is.
+
+### 2. Real bars made the definitions *more* redundant, not less
+
+Entry-offset correlations are **≥ 0.925 for every pair** (synthetic: > 0.87), while same-bar
+agreement stays low and uneven:
+
+| Pair | Same bar | Entry-offset correlation |
+|---|---:|---:|
+| OB-A vs OB-B | 69.0% | 0.985 |
+| OB-B vs OB-C | 30.7% | 0.967 |
+| OB-A vs OB-C | 23.2% | 0.970 |
+| OB-A vs OB-D | **0.0%** | **0.925** |
+| OB-B vs OB-D | 0.0% | 0.925 |
+| OB-C vs OB-D | 0.0% | 0.926 |
+
+**OB-D never once picks the same bar as any other definition, across 393 paired setups, and
+still correlates 0.925 with all three on the price a trade would actually pay.** That is the
+sharpest form the D-012 §2 finding has taken. SPEC 13.6's heuristic — *"if OB-A and OB-C
+select the same bar 80% of the time, they are not two hypotheses"* — would license treating
+OB-D as a fully independent fourth test. It is not one.
+
+### 3. Answerability is the D-020 shape again
+
+OB-A yields **492 touch events** across the 40 in-sample symbol-years, 12 per symbol-year, of
+which **135** fall on the three development symbols.
+
+| h | touches needed | universe (492) | development set (135) |
+|---:|---:|---|---|
+| 1 | 155 | yes | **no** |
+| 3 | 343 | yes | **no** |
+| 6 | 784 | **no** | **no** |
+| 12 | 1,652 | **no** | **no** |
+
+**The study is answerable at short horizons across the universe and at no horizon at all on
+the development set** — 135 against the 155 that h=1 alone requires. This is D-020 recurring:
+a pooled number that clears while the three symbols development actually iterates on do not,
+and the two findings share a cause, because this study draws from the funnel Phase 9 measured.
+
+Worth stating plainly: a definition bake-off that cannot be resolved on the development set is
+a bake-off whose winner cannot be chosen without touching data reserved for validating the
+choice.
+
+### 4. The bootstrap's under-coverage was a small-sample artefact
+
+The synthetic run reported the null calibration as **anti-conservative** and reasoned that the
+percentile bootstrap under-covers with a few dozen heavy-tailed observations. On real bars,
+with 492 pooled touches instead of a few dozen:
+
+- false-positive rate **5.6%** over 3,000 shuffles against α = 5%
+- Wilson interval **[4.9%, 6.5%]**, which contains α
+- deviation **1.6 σ**
+
+**Calibrated.** The earlier explanation is confirmed by the mechanism it predicted: raise the
+sample and the coverage comes back. The practical consequence is that the UNDERPOWERED
+verdicts in this report are trustworthy as stated, rather than "understated" the way the
+synthetic ones had to be qualified.
+
+The positive control also tightens: an injected **+0.25 ATR** is now detected (MDE 0.140 ATR
+at h=1), where the fixture needed more.
+
+### 5. Two things that transferred quietly, and one that did not
+
+- **Half of OB-A's blocks are never filled within 30 bars** — 50.4% fill@30 on real bars
+  against the fixture's roughly-half. Entry model D discards about half the setups it is
+  offered, before any of the other four models have had their fill rates measured on real
+  data. The fixture's warning about this was right.
+- **`NO_DISPLACEMENT` is identical across all four definitions** (5,148 of 6,764 setups),
+  because SPEC 13.4's constraint 1 is applied before any definition-specific search. That is
+  what stops OB-A degenerating into "the last red candle".
+- **OB-D's hit rate did not transfer and should not be read as one.** 5.9% against A/B/C's
+  ~23%, driven by `NO_FAILED_MOVE` (593) and `OB_ABOVE_REFERENCE` (463) — rejections the
+  others barely see. D-012 recorded OB-D's implementation as **a flagged reading of a one-line
+  specification, not a resolved one**, and that has not changed. Its hit rate is a property of
+  the reading.
+
+### 6. What this does not establish
+
+**Which definition is best** — that needs performance, which needs Phases 12-14. And
+**nothing about `M_eff`'s stability across splits**: it is recomputed here on the in-sample
+years only, and it must *not* be recomputed on the out-of-sample or holdout years to check,
+because that spends out-of-sample budget on a nuisance parameter (protocol §7).

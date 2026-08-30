@@ -63,7 +63,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 **on real bars** — four variants are worth **1.68 tests**, see D-022 |
 | 12 | Entry engine — five models, fill resolution against M1 | `reports/phase12_gate.md` | 8/8 **on real bars, real M1** — the lookahead has a magnitude and two predictions failed, see D-025 |
 | 13 | Risk — stops S1–S4, the RR gate, sizing, limits | `reports/phase13_gate.md` | 8/8 **on real bars** — **6 of 10 symbols cannot be sized at all** (no FX rate), see D-026 |
-| 14 | Backtest engine — exits, costs, metrics, Monte Carlo | `reports/phase14_gate.md` | 10/10 — **four free lunches found and closed**, see D-015 |
+| 14 | Backtest engine — exits, costs, metrics, Monte Carlo | `reports/phase14_gate.md` | 10/10 **on real bars** — 102 trades, expectancy −0.19 R, CI spans zero, see D-027 |
 | — | **The falsification suite**: shuffled liquidity, sweep-only, CHoCH-only, reversed-order, random-time (protocol 6.3/6.4) | `reports/falsification.md` | Built and validated — **and section 10.1's own acceptance row turns out to be satisfiable by stop width**, see D-016 |
 | — | **The ablation matrix** (protocol 6.5) | `reports/ablation.md` | 34 variants over 19 components — **5 of the 19 cannot be toggled at all**, and 7 variants change nothing, see D-017 |
 
@@ -436,7 +436,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-026 record corrections and findings from each phase's implementation.
+D-004 through D-027 record corrections and findings from each phase's implementation.
 **D-020 is the one to read first**: it is the only entry written against real bars, and
 it is the one that turned Phase 9's PASS into a FAIL.
 
@@ -533,6 +533,9 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 83 | **`trade.evaluate` reports a missing FX rate as `SIZE_BELOW_MIN`**, so the rejection log names lot granularity for a failure that is nothing of the kind — and it produced exactly the wrong diagnosis ("the account is too small") before the sizing call was run directly. D-019 §1 recurring. SPEC 19 has no code for it, so adding one is a specification change (D-026 §2). |
 | 84 | **S4's 40-pip ceiling does bind on real bars** — 12% of setups overall, 47% of GBPUSD's, 1% of EURGBP's, and the ceiling is **60 pips for JPY pairs** because `max_sl_pips` is {default: 60, JPY: 90}. S4 is a partially available model whose availability depends on the symbol; D-014 §3's open question, answered (D-026 §3). |
 | 85 | **An account sweep must not be fed the setups that already sized.** Its denominator would be fixed by the one number it varies. Feed it every setup whose stop cleared the SPEC 16.3 caps (D-026 §4). |
+| 86 | **The whole in-sample book is 102 trades on four symbols**, against protocol 5.1's floor of 200 for a headline claim. The shortfall is **structural, not a matter of more history**: six symbols cannot be sized for want of an FX rate (D-026), so reaching 200 in-sample needs a conversion series rather than more years (D-027 §2). |
+| 87 | **In-sample expectancy is −0.19 R with a CI spanning zero** ([−0.38, +0.02] block bootstrap, 102 trades). Negative point estimate, interval reaching positive, sample too small to separate them — neither evidence of edge nor evidence against, and **not** a result to quote either way (D-027 §1). |
+| 88 | **Phase 14 must build one market at a time.** It runs ~19 variants over each, so the original built all markets first; ten symbols × four years of M1 is 1.04 GB measured. `run` costs ~0.0s against `build_market`'s ~44s, so inverting the loops is free (D-027 §4). |
 
 ---
 
@@ -627,12 +630,11 @@ caught it. Four mutations were run against the new suite and all four are now ca
 
 ## 8. The honest limitation
 
-**Some numbers in this file still come from a synthetic random walk.** Real bars landed
-on 2026-08-30; **Phases 9-13** (§3 D-020, D-023, D-022, D-025, D-026) and **the H5
-study** (§3a, D-024) have been re-run on them. What is left on the fixture is **Phase
-14, the falsification suite and the ablation matrix** — the three that produce
-performance numbers. The fixture has no liquidity, no participants and no structure,
-so:
+**Every phase gate has now been re-run on real bars.** Real bars landed on 2026-08-30;
+**Phases 9-14** (§3 D-020, D-023, D-022, D-025, D-026, D-027) and **the H5 study**
+(§3a, D-024) are all measured on them. What is left on the fixture is **the
+falsification suite and the ablation matrix**. Where the text below still describes
+the fixture, it describes `--synthetic`, which every report still reproduces:
 
 - Sweep counts, rates, distributions, rejection rates and now the MSS funnel are
   properties of *the detectors meeting noise*. They prove the engines are deterministic,

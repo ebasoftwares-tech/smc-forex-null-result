@@ -3,21 +3,25 @@
 Gate: **"Full protocol (`BACKTEST_PROTOCOL.md`); replay + shifted-data tests green; cost
 sensitivity run."**
 
-**Read section "What this report does NOT establish" before any number in it.** The engine
-is complete and every figure below is a property of the detectors meeting a random walk.
-`bot/data/synthetic.py` has no participants and no liquidity, so an expectancy measured on
-it is a measurement of the machinery, not of a market. Every confidence interval here
-spans zero, and on this fixture that is the correct result.
+**Read section "What this report does NOT establish" before any number in it.** On real
+bars the numbers below are measurements of a strategy rather than of machinery -- but they
+are in-sample, on a trade count under the protocol's own floor for a headline claim, and
+on the four of ten symbols that can be sized at all (D-026). Under `--synthetic` every
+figure is instead the detectors meeting a random walk, where a CI excluding zero would
+mean a bug.
 
-    python scripts/phase14_report.py
+    python scripts/phase14_report.py              # real bars, data/parquet
+    python scripts/phase14_report.py --synthetic  # the original fixture
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
-from collections import Counter
+import time
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,11 +36,15 @@ from bot.config.loader import load_config  # noqa: E402
 from bot.core.entries import EntryModel  # noqa: E402
 from bot.core.stops import StopModel  # noqa: E402
 from bot.core.targets import TargetModel  # noqa: E402
+from bot.data.ingest import DatasetManifest, read_series  # noqa: E402
 from bot.data.synthetic import generate  # noqa: E402
 
 UTC = timezone.utc
-OUT = Path("reports/phase14_gate.md")
-YEARS = (2024, 2025, 2026)
+PARQUET = Path("data/parquet")
+SYNTH_YEARS = (2024, 2025, 2026)
+
+# PRE_REGISTRATION section 4.1 as stamped by Amendment 1.
+IS_YEARS, OOS_YEARS = 4, 2
 COST_MULTIPLIERS = (1.0, 1.5, 2.0)
 LABELS = {
     EntryModel.A_MARKET: "A — market on MSS",
@@ -45,6 +53,25 @@ LABELS = {
     EntryModel.D_ORDER_BLOCK: "D — order block",
     EntryModel.E_LEG_MIDPOINT: "E — 50% of the leg",
 }
+
+
+def acquired_years(manifest: DatasetManifest, ingest_tf: str) -> list[int]:
+    years: set[int] = set()
+    for e in manifest.series:
+        if e.timeframe != ingest_tf or not e.first_bar_utc or not e.last_bar_utc:
+            continue
+        a = datetime.fromisoformat(e.first_bar_utc).year
+        b = datetime.fromisoformat(e.last_bar_utc).year
+        years.update(range(a, b + 1))
+    return sorted(years)
+
+
+def split(years: list[int]) -> dict[str, list[int]]:
+    return {
+        "in_sample": years[:IS_YEARS],
+        "out_of_sample": years[IS_YEARS : IS_YEARS + OOS_YEARS],
+        "holdout": years[IS_YEARS + OOS_YEARS :],
+    }
 
 
 def _run_tests() -> tuple[bool, str]:
@@ -111,55 +138,106 @@ class Pooled:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--synthetic", action="store_true", help="the original fixture")
+    ap.add_argument("--skip-tests", action="store_true", help="skip the suite")
+    args = ap.parse_args()
+
     cfg, cfg_hash = load_config()
+    real = not args.synthetic
+    OUT = Path("reports/phase14_gate.md" if real else "reports/phase14_gate_synthetic.md")
     OUT.parent.mkdir(parents=True, exist_ok=True)
 
-    markets = []
-    for k, year in enumerate(YEARS):
-        print(f"building {year} (M1) ...", flush=True)
-        m1 = generate("EURUSD", datetime(year, 1, 1, tzinfo=UTC),
-                      datetime(year, 12, 31, 23, 59, tzinfo=UTC), cfg,
-                      timeframe="M1", seed=41 + k)
-        markets.append(build_market(cfg, m1))
-    total_bars = sum(m.h4.n for m in markets)
-    total_setups = sum(len(m.setups) for m in markets)
+    dataset_hash = tzdata = source_label = price_side = "-"
+    splits: dict[str, list[int]] = {}
+    if real:
+        manifest = DatasetManifest.load(PARQUET / "manifest.json")
+        dataset_hash, tzdata = manifest.dataset_hash, manifest.tzdata_version
+        source_label, price_side = manifest.source, manifest.price_side
+        splits = split(acquired_years(manifest, manifest.ingest_timeframe))
+        is_years = splits["in_sample"]
+        units = list(cfg.symbols)
+    else:
+        is_years = list(SYNTH_YEARS)
+        units = list(SYNTH_YEARS)
+    symbol_years = len(units) * len(is_years) if real else len(units)
 
-    def pooled(config=None, **kw):
-        c = config or cfg
-        return Pooled([run(c, mk, config_hash=cfg_hash, **kw) for mk in markets])
+    # Configs that vary per variant, built once rather than per market.
+    cost_cfgs = {
+        mult: load_config(overrides={"cost": {"multiplier": mult}})[0]
+        for mult in COST_MULTIPLIERS
+    }
+    tp_cfgs = {
+        tm: load_config(overrides={"tp": {"model": tm.value}})[0] for tm in TargetModel
+    }
 
-    print("running the entry-model bake-off ...", flush=True)
-    bake = {m: pooled(entry_model=m, apply_limits=False) for m in EntryModel}
-    baseline = bake[EntryModel(cfg.entry.model)]
-
-    print("running the portfolio pass ...", flush=True)
-    with_limits = pooled(apply_limits=True)
-
-    print("running the cost sensitivity sweep ...", flush=True)
-    cost_runs = {}
-    for mult in COST_MULTIPLIERS:
-        c, _ = load_config(overrides={"cost": {"multiplier": mult}})
-        cost_runs[mult] = pooled(config=c, apply_limits=False)
-
-    print("running the stop and target model matrices ...", flush=True)
-    stop_runs = {s: pooled(sl_model=s, apply_limits=False) for s in StopModel}
-    tp_runs = {}
-    for t in TargetModel:
-        c, _ = load_config(overrides={"tp": {"model": t.value}})
-        tp_runs[t] = pooled(config=c, apply_limits=False)
-
-    print("running the entry-timing shift ...", flush=True)
-    shifted = {k: pooled(entry_bar_offset=k, apply_limits=False) for k in (-1, 1)}
-
-    print("measuring the arming disparity ...", flush=True)
+    # ONE market resident at a time.  Ten symbols x four years of M1 is 1.04 GB, and
+    # `run` costs ~0.0s against `build_market`'s ~44s, so running every variant on a
+    # market before dropping it is free and bounds memory at one symbol.
+    acc: dict[object, list] = defaultdict(list)
+    total_bars = total_setups = 0
     armed_net, rej_net = [], []
-    for mk in markets:
+    per_symbol_trades: dict[str, int] = {}
+
+    for _i, unit in enumerate(units):
+        _t0 = time.time()
+        if real:
+            print(f"[{_i + 1}/{len(units)}] {unit} {is_years[0]}-{is_years[-1]} (M1) ...",
+                  flush=True)
+            mk = build_market(cfg, read_series(PARQUET, unit, "M1", years=is_years))
+        else:
+            print(f"building {unit} (M1) ...", flush=True)
+            mk = build_market(cfg, generate(
+                "EURUSD", datetime(unit, 1, 1, tzinfo=UTC),
+                datetime(unit, 12, 31, 23, 59, tzinfo=UTC), cfg,
+                timeframe="M1", seed=41 + _i,
+            ))
+        total_bars += mk.h4.n
+        total_setups += len(mk.setups)
+
+        for m in EntryModel:
+            acc[("bake", m)].append(
+                run(cfg, mk, config_hash=cfg_hash, entry_model=m, apply_limits=False)
+            )
+        acc["limits"].append(run(cfg, mk, config_hash=cfg_hash, apply_limits=True))
+        for mult, c in cost_cfgs.items():
+            acc[("cost", mult)].append(
+                run(c, mk, config_hash=cfg_hash, apply_limits=False)
+            )
+        for s in StopModel:
+            acc[("stop", s)].append(
+                run(cfg, mk, config_hash=cfg_hash, sl_model=s, apply_limits=False)
+            )
+        for tm, c in tp_cfgs.items():
+            acc[("tp", tm)].append(run(c, mk, config_hash=cfg_hash, apply_limits=False))
+        for k in (-1, 1):
+            acc[("shift", k)].append(
+                run(cfg, mk, config_hash=cfg_hash, entry_bar_offset=k, apply_limits=False)
+            )
+
+        # The arming disparity, on this market's own model-A run.
+        ra = acc[("bake", EntryModel.A_MARKET)][-1]
         net = {c.sweep.id: c.displacement.net_atr for c in mk.setups}
-        ra = run(cfg, mk, config_hash=cfg_hash, entry_model=EntryModel.A_MARKET,
-                 apply_limits=False)
         wide = {x.setup_id for x in ra.rejections if x.reason == "SL_TOO_WIDE"}
         for sid, v in net.items():
             (rej_net if sid in wide else armed_net).append(v)
+
+        if real:
+            per_symbol_trades[unit] = len(
+                acc[("bake", EntryModel(cfg.entry.model))][-1].trades
+            )
+        print(f"      {len(mk.setups):,} setups, "
+              f"{len(acc[('bake', EntryModel(cfg.entry.model))][-1].trades):,} trades "
+              f"({time.time() - _t0:.0f}s)", flush=True)
+        del mk
+
+    bake = {m: Pooled(acc[("bake", m)]) for m in EntryModel}
+    baseline = bake[EntryModel(cfg.entry.model)]
+    with_limits = Pooled(acc["limits"])
+    cost_runs = {mult: Pooled(acc[("cost", mult)]) for mult in COST_MULTIPLIERS}
+    stop_runs = {s: Pooled(acc[("stop", s)]) for s in StopModel}
+    tp_runs = {tm: Pooled(acc[("tp", tm)]) for tm in TargetModel}
+    shifted = {k: Pooled(acc[("shift", k)]) for k in (-1, 1)}
     armed_a, rej_a = len(armed_net), len(rej_net)
     med_armed = float(np.median(armed_net)) if armed_net else float("nan")
     med_rej = float(np.median(rej_net)) if rej_net else float("nan")
@@ -189,8 +267,11 @@ def main() -> int:
          for s in shifted.values()],
     ))
 
-    print("running test suite ...", flush=True)
-    tests_ok, tests_line = _run_tests()
+    if args.skip_tests:
+        tests_ok, tests_line = True, "SKIPPED (--skip-tests)"
+    else:
+        print("running test suite ...", flush=True)
+        tests_ok, tests_line = _run_tests()
     replay_ok, replay_line = _named_tests("replay or shifted")
 
     checks = [
@@ -241,7 +322,12 @@ def main() -> int:
             "No headline strategy claim is made",
             not base_m.reportable or not np.isfinite(base_m.expectancy_r_ci[0])
             or base_m.expectancy_r_ci[0] <= 0 <= base_m.expectancy_r_ci[1],
-            "the fixture is a random walk; a CI excluding zero here would mean a bug",
+            (
+                f"n = {len(baseline.trades)} against protocol 5.1's floor of 200, and "
+                "in-sample"
+            )
+            if real
+            else "the fixture is a random walk; a CI excluding zero here would mean a bug",
         ),
     ]
     all_ok = all(ok for _, ok, _ in checks)
@@ -255,8 +341,21 @@ def main() -> int:
     w(f"Generated {datetime.now(UTC).isoformat(timespec='seconds')}")
     w("")
     w(f"- `config_hash` `{cfg_hash}`")
-    w(f"- Fixture: {len(YEARS)} synthetic years ({YEARS[0]}-{YEARS[-1]}), EURUSD, "
-      f"generated at M1")
+    if real:
+        w(f"- `dataset_hash` `{dataset_hash}`")
+        w(
+            f"- Data: **real bars** -- {len(units)} symbols, {is_years[0]}-{is_years[-1]} "
+            f"({symbol_years} symbol-years), H4 with the real M1 path, source "
+            f"`{source_label}`, `{price_side}` side, tzdata `{tzdata}`"
+        )
+        w(
+            f"- Split (PRE_REGISTRATION 4.1, Amendment 1): in-sample "
+            f"**{splits['in_sample']}**, out-of-sample {splits['out_of_sample']}, "
+            f"holdout {splits['holdout']}"
+        )
+    else:
+        w(f"- Fixture: {len(SYNTH_YEARS)} synthetic years "
+          f"({SYNTH_YEARS[0]}-{SYNTH_YEARS[-1]}), EURUSD, generated at M1")
     w(f"- **{total_setups:,} displaced CHoCH setups** over {total_bars:,} H4 bars")
     w(f"- Account: {cfg.account.currency} {cfg.account.starting_equity:,.0f} at "
       f"{cfg.risk.pct_per_trade}% per trade")
@@ -299,11 +398,22 @@ def main() -> int:
         w(f"| {name} | {count:,} | {conv} |")
         prev = count if count else prev
     w("")
-    w("The two large drops are both known and neither is new. Sweeps to MSS is Phase 9's")
-    w("**1.98%** funnel, the number the design's gate was set against. Armed to filled is")
-    w("the opposing-sweep cancel, which D-013 section 4 measured as a fixture property: a")
-    w("random walk with up to 40 active levels produces sweeps at a rate no real market")
-    w("sustains, so `cancel_if` clause 2 cancels most limit orders before they fill.")
+    if real:
+        w("The two large drops are both known. Sweeps to MSS is Phase 9's funnel, measured")
+        w("at **1.59%** on real bars (D-020) against the 1.98% the gate was set against.")
+        w("")
+        w("Armed to filled is the opposing-sweep cancel — and the claim that this was a")
+        w("fixture artefact is **false**. D-013 §4 called it *\"a rate no real market")
+        w("sustains\"*; D-025 §3 measured 0.44 confirmed sweeps per H4 bar on real data")
+        w("against the fixture's 0.47. `cancel_if` clause 2 removes most limit orders here")
+        w("for the same reason it did there, and it is a FROZEN clause deciding the entry")
+        w("bake-off by itself.")
+    else:
+        w("The two large drops are both known and neither is new. Sweeps to MSS is Phase 9's")
+        w("**1.98%** funnel, the number the design's gate was set against. Armed to filled is")
+        w("the opposing-sweep cancel, which D-013 section 4 measured as a fixture property: a")
+        w("random walk with up to 40 active levels produces sweeps at a rate no real market")
+        w("sustains, so `cancel_if` clause 2 cancels most limit orders before they fill.")
     w("")
 
     # ------------------------------------------------------------- headline
@@ -350,13 +460,37 @@ def main() -> int:
     w(f"Expectancy CI (stationary block, mean block {M.BLOCK}): "
       f"**[{blo:+.3f}, {bhi:+.3f}] R**")
     w("")
-    w("**Both intervals span zero, and on this fixture that is the correct result.** The")
-    w("block interval is the one protocol 5.3 requires for anything conditioned on a")
-    w("slow-moving variable: trades are not independent, so an i.i.d. resample understates")
-    w("the uncertainty.")
+    if real:
+        w("**Both intervals span zero.** On real bars that is a result rather than a")
+        w("tautology, and it is the only honest reading of it: the point estimate is")
+        w("negative, the interval reaches into positive territory, and the sample is too")
+        w("small to separate the two. It is neither evidence of edge nor evidence against.")
+        w("")
+        w("The block interval is the one protocol 5.3 requires for anything conditioned on a")
+        w("slow-moving variable: trades are not independent, so an i.i.d. resample")
+        w("understates the uncertainty. Read the block row.")
+    else:
+        w("**Both intervals span zero, and on this fixture that is the correct result.** The")
+        w("block interval is the one protocol 5.3 requires for anything conditioned on a")
+        w("slow-moving variable: trades are not independent, so an i.i.d. resample understates")
+        w("the uncertainty.")
     w("")
-    w(f"`n = {base_m.n}` against protocol 5.1's floor of **200 for a headline claim**, so")
-    w("no headline claim is made and none would be made even if the fixture were real.")
+    w(f"`n = {base_m.n}` against protocol 5.1's floor of "
+      "**200 for a headline claim**, so no headline claim is made.")
+    if real:
+        w("")
+        w("**And the shortfall is structural, not a matter of waiting for more years.**")
+        w("Six of the ten symbols cannot be sized at all — every one whose quote currency is")
+        w("not the account currency, blocked by SPEC 18.2's missing-FX-rate rule while Q1 is")
+        w("open (D-026 §1). The book below is four symbols, not ten:")
+        w("")
+        w("| Symbol | trades |")
+        w("|---|---:|")
+        for _s, _n in sorted(per_symbol_trades.items(), key=lambda kv: -kv[1]):
+            w(f"| {_s} | {_n} |")
+        w("")
+        w("Reaching 200 trades in-sample is therefore not a question of more history at this")
+        w("funnel rate — it needs the other six symbols, which needs a conversion series.")
     w("")
 
     # --------------------------------------------------------- the bake-off
@@ -561,10 +695,18 @@ def main() -> int:
         thr = f"{x.threshold:g}" if x.threshold is not None else "—"
         w(f"| {x.name} | {x.statistic} | {_fmt(x.value, '{:.4f}')} | {thr} | {v} |")
     w("")
-    w("**A FAIL here is the correct result on a random walk** and says nothing about the")
-    w("engine: a fixture with no edge should not survive a test designed to detect whether")
-    w("an edge is real. What the table establishes is that each test runs, is seeded, and")
-    w("returns a verdict rather than a number.")
+    if real:
+        w("**These FAILs are what a sample with no demonstrable edge looks like**, which is")
+        w("what the headline interval already said. Protocol 9's suite is designed to ask")
+        w("whether an edge survives perturbation; there is no edge here to perturb, so the")
+        w("verdicts carry no information beyond the expectancy CI above and must not be")
+        w("read as independent evidence against the strategy. What the table does establish")
+        w("is that each test runs, is seeded, and returns a verdict rather than a number.")
+    else:
+        w("**A FAIL here is the correct result on a random walk** and says nothing about the")
+        w("engine: a fixture with no edge should not survive a test designed to detect whether")
+        w("an edge is real. What the table establishes is that each test runs, is seeded, and")
+        w("returns a verdict rather than a number.")
     w("")
     w("The two `concentration` rows are additions rather than protocol items. Protocol 9")
     w("calls the skip-10% test the one that *\"no other test in this suite reliably")

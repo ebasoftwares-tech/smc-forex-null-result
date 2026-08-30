@@ -8,14 +8,20 @@ asks whether a component contributes, and on a random walk the true contribution
 component is zero by construction -- including the real ones.  The nulls below are
 guaranteed by the fixture and are evidence about the instrument, not about the strategy.
 
-    python scripts/falsification_report.py
+    python scripts/falsification_report.py              # real bars, data/parquet
+    python scripts/falsification_report.py --synthetic  # the original fixture
+    python scripts/falsification_report.py --workers 1  # force serial
 """
 
 from __future__ import annotations
 
+import argparse
+import os
 import re
 import subprocess
 import sys
+import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,19 +32,99 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bot.backtest.engine import build_market, run  # noqa: E402
 from bot.config.loader import load_config  # noqa: E402
 from bot.core.entries import EntryModel  # noqa: E402
+from bot.data.ingest import DatasetManifest, read_series  # noqa: E402
 from bot.data.synthetic import generate  # noqa: E402
 from bot.research import falsification as F  # noqa: E402
 from bot.research import stats  # noqa: E402
 
 UTC = timezone.utc
-OUT = Path("reports/falsification.md")
-YEARS = (2024, 2025, 2026)
+PARQUET = Path("data/parquet")
+SYNTH_YEARS = (2024, 2025, 2026)
+
+# PRE_REGISTRATION section 4.1 as stamped by Amendment 1.
+IS_YEARS, OOS_YEARS = 4, 2
 
 #: Model A, not the configured default.  See the report section "Why the comparison runs
 #: at entry model A" -- two of the four section 6.4 controls arm zero orders at model C.
 PRIMARY_MODEL = EntryModel.A_MARKET
 
 RNG_SEED = 20260828
+
+
+def acquired_years(manifest: DatasetManifest, ingest_tf: str) -> list[int]:
+    years: set[int] = set()
+    for e in manifest.series:
+        if e.timeframe != ingest_tf or not e.first_bar_utc or not e.last_bar_utc:
+            continue
+        a = datetime.fromisoformat(e.first_bar_utc).year
+        b = datetime.fromisoformat(e.last_bar_utc).year
+        years.update(range(a, b + 1))
+    return sorted(years)
+
+
+def split(years: list[int]) -> dict[str, list[int]]:
+    return {
+        "in_sample": years[:IS_YEARS],
+        "out_of_sample": years[IS_YEARS : IS_YEARS + OOS_YEARS],
+        "holdout": years[IS_YEARS + OOS_YEARS :],
+    }
+
+
+def _unit_arms(task):
+    """Every arm for ONE market: the unit of parallelism.
+
+    Module-level and self-contained so it survives `spawn` on Windows -- it reloads the
+    config and reads its own M1 rather than receiving either, which keeps what crosses
+    the process boundary to a dict of `Arm` objects.
+    """
+    unit, is_years, real, seeds, primary_name, default_name = task
+    cfg, cfg_hash = load_config()
+
+    if real:
+        m1 = read_series(PARQUET, unit, "M1", years=is_years)
+    else:
+        m1 = generate(
+            "EURUSD", datetime(unit, 1, 1, tzinfo=UTC),
+            datetime(unit, 12, 31, 23, 59, tzinfo=UTC), cfg,
+            timeframe="M1", seed=41 + is_years.index(unit),
+        )
+    mk = build_market(cfg, m1)
+    primary = EntryModel(primary_name)
+    default = EntryModel(default_name)
+
+    def arm_for(spec, market, seed=None, model=None):
+        return F.arm_from(
+            spec, market,
+            run(cfg, market, config_hash=cfg_hash,
+                entry_model=model or primary, apply_limits=False),
+            seed=seed,
+        )
+
+    def sequence_arms(model):
+        got = {"baseline": arm_for(F.BASELINE, mk, model=model)}
+        for spec in F.CONTROLS:
+            if spec.name == "sweep_only":
+                got[spec.name] = arm_for(spec, F.sweep_only(cfg, mk), model=model)
+            elif spec.name == "choch_only":
+                got[spec.name] = arm_for(spec, F.choch_only(cfg, mk), model=model)
+            elif spec.name == "reversed_order":
+                got[spec.name] = arm_for(spec, F.reversed_order(cfg, mk), model=model)
+        return got
+
+    sh_spec, rt_spec = F.BY_NAME["shuffled_liquidity"], F.BY_NAME["random_time"]
+    return unit, {
+        "h4_n": mk.h4.n,
+        "setups": len(mk.setups),
+        "primary": sequence_arms(primary),
+        "default": sequence_arms(default),
+        "shuffled": {
+            s: arm_for(sh_spec, F.build_shuffled_market(cfg, m1, mk, s), seed=s)
+            for s in seeds
+        },
+        "random_time": {
+            s: arm_for(rt_spec, F.random_time(cfg, mk, s), seed=s) for s in seeds
+        },
+    }
 
 
 def _run_tests(expr: str | None = None) -> tuple[bool, str]:
@@ -57,79 +143,86 @@ def _fmt(x: float, nd: int = 3) -> str:
     return "--" if x is None or not np.isfinite(x) else f"{x:.{nd}f}"
 
 
-def _build(cfg, cfg_hash, markets, m1s, model):
-    """Every arm, pooled across years, at one entry model."""
-    def pooled_arm(spec, per_year_markets, seed=None):
-        made = [
-            F.arm_from(spec, mk,
-                       run(cfg, mk, config_hash=cfg_hash, entry_model=model,
-                           apply_limits=False),
-                       seed=seed)
-            for mk in per_year_markets
-        ]
-        return F.pooled(spec, made)
-
-    out = {"baseline": pooled_arm(F.BASELINE, markets)}
-    for spec in F.CONTROLS:
-        if spec.name == "sweep_only":
-            out[spec.name] = pooled_arm(spec, [F.sweep_only(cfg, mk) for mk in markets])
-        elif spec.name == "choch_only":
-            out[spec.name] = pooled_arm(spec, [F.choch_only(cfg, mk) for mk in markets])
-        elif spec.name == "reversed_order":
-            out[spec.name] = pooled_arm(
-                spec, [F.reversed_order(cfg, mk) for mk in markets]
-            )
-    return out
-
-
-def _seeded(cfg, cfg_hash, markets, m1s, model, which):
-    """One ``Arm`` per seed for a seeded control, plus the pooled arm."""
-    spec = F.BY_NAME[which]
-    per_seed = []
-    for seed in F.SEEDS:
-        if which == "random_time":
-            mks = [F.random_time(cfg, mk, seed) for mk in markets]
-        else:
-            mks = [
-                F.build_shuffled_market(cfg, m1, mk, seed)
-                for m1, mk in zip(m1s, markets)
-            ]
-        made = [
-            F.arm_from(spec, mk,
-                       run(cfg, mk, config_hash=cfg_hash, entry_model=model,
-                           apply_limits=False),
-                       seed=seed)
-            for mk in mks
-        ]
-        per_seed.append(F.pooled(spec, made))
-        print(f"  {which} seed {seed:2d}: "
-              f"{per_seed[-1].n_setups:5d} setups, "
-              f"E/setup {per_seed[-1].expectancy_per_setup:+.4f} R", flush=True)
-    return per_seed, F.pooled(spec, per_seed)
-
-
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--synthetic", action="store_true", help="the original fixture")
+    ap.add_argument("--workers", type=int, default=0,
+                    help="0 = auto, 1 = serial (identical numbers, slower)")
+    ap.add_argument("--symbols", default="", help="comma-separated subset, for checking")
+    ap.add_argument("--seeds", type=int, default=0, help="0 = all of falsification.SEEDS")
+    args = ap.parse_args()
+
     cfg, cfg_hash = load_config()
+    real = not args.synthetic
+    OUT = Path("reports/falsification.md" if real
+               else "reports/falsification_synthetic.md")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(RNG_SEED)
 
-    m1s, markets = [], []
-    for k, year in enumerate(YEARS):
-        print(f"building {year} (M1) ...", flush=True)
-        m1 = generate("EURUSD", datetime(year, 1, 1, tzinfo=UTC),
-                      datetime(year, 12, 31, 23, 59, tzinfo=UTC), cfg,
-                      timeframe="M1", seed=41 + k)
-        m1s.append(m1)
-        markets.append(build_market(cfg, m1))
+    dataset_hash = tzdata = source_label = price_side = "-"
+    splits: dict[str, list[int]] = {}
+    if real:
+        manifest = DatasetManifest.load(PARQUET / "manifest.json")
+        dataset_hash, tzdata = manifest.dataset_hash, manifest.tzdata_version
+        source_label, price_side = manifest.source, manifest.price_side
+        splits = split(acquired_years(manifest, manifest.ingest_timeframe))
+        is_years = splits["in_sample"]
+        units = list(cfg.symbols)
+        if args.symbols:
+            want = {s.strip() for s in args.symbols.split(",")}
+            units = [u for u in units if u in want]
+    else:
+        is_years = list(SYNTH_YEARS)
+        units = list(SYNTH_YEARS)
+    symbol_years = len(units) * len(is_years) if real else len(units)
 
-    print("building the sequence controls ...", flush=True)
-    arms = _build(cfg, cfg_hash, markets, m1s, PRIMARY_MODEL)
+    seeds = list(F.SEEDS[: args.seeds]) if args.seeds else list(F.SEEDS)
+    default_model = EntryModel(cfg.entry.model)
+    tasks = [
+        (u, is_years, real, seeds, PRIMARY_MODEL.value, default_model.value)
+        for u in units
+    ]
 
-    print("building the shuffled-liquidity arm (20 seeds x 3 years) ...", flush=True)
-    shuf_seeds, shuf = _seeded(cfg, cfg_hash, markets, m1s, PRIMARY_MODEL,
-                               "shuffled_liquidity")
-    print("building the random-time floor (20 seeds x 3 years) ...", flush=True)
-    rand_seeds, rand = _seeded(cfg, cfg_hash, markets, m1s, PRIMARY_MODEL, "random_time")
+    n_workers = args.workers or min(len(tasks), max(1, (os.cpu_count() or 2) - 1), 5)
+    print(f"building {len(tasks)} markets x {len(seeds)} seeds on {n_workers} worker(s) ...",
+          flush=True)
+    t0 = time.time()
+    got: dict[object, dict] = {}
+    if n_workers == 1:
+        for task in tasks:
+            u, res = _unit_arms(task)
+            got[u] = res
+            print(f"  {u}: {res['setups']} setups ({time.time() - t0:.0f}s elapsed)",
+                  flush=True)
+    else:
+        with ProcessPoolExecutor(max_workers=n_workers) as ex:
+            for u, res in ex.map(_unit_arms, tasks):
+                got[u] = res
+                print(f"  {u}: {res['setups']} setups ({time.time() - t0:.0f}s elapsed)",
+                      flush=True)
+    print(f"built in {time.time() - t0:.0f}s", flush=True)
+
+    markets_h4_bars = sum(g["h4_n"] for g in got.values())
+    order_units = [u for u in units if u in got]
+
+    def pool_named(kind, name, spec):
+        return F.pooled(spec, [got[u][kind][name] for u in order_units])
+
+    arms = {"baseline": pool_named("primary", "baseline", F.BASELINE)}
+    for spec in F.CONTROLS:
+        if spec.name in ("sweep_only", "choch_only", "reversed_order"):
+            arms[spec.name] = pool_named("primary", spec.name, spec)
+
+    # Per seed, pooled across units first -- the same nesting the serial version used, so
+    # the across-seed spread stays the honest uncertainty (falsification.pooled's docstring).
+    def seeded(kind, spec):
+        per_seed = [
+            F.pooled(spec, [got[u][kind][s] for u in order_units]) for s in seeds
+        ]
+        return per_seed, F.pooled(spec, per_seed)
+
+    shuf_seeds, shuf = seeded("shuffled", F.BY_NAME["shuffled_liquidity"])
+    rand_seeds, rand = seeded("random_time", F.BY_NAME["random_time"])
 
     arms["shuffled_liquidity"] = shuf
     arms["random_time"] = rand
@@ -143,9 +236,10 @@ def main() -> int:
     bh = stats.benjamini_hochberg([comparisons[c.name].p_value for c in F.CONTROLS])
 
     # The section 10.1 row, and the model-C finding behind why it runs at model A.
-    default_model = EntryModel(cfg.entry.model)
-    print("checking the configured default entry model ...", flush=True)
-    default_arms = _build(cfg, cfg_hash, markets, m1s, default_model)
+    default_arms = {"baseline": pool_named("default", "baseline", F.BASELINE)}
+    for spec in F.CONTROLS:
+        if spec.name in ("sweep_only", "choch_only", "reversed_order"):
+            default_arms[spec.name] = pool_named("default", spec.name, spec)
 
     tests_ok, tests_line = _run_tests()
 
@@ -155,9 +249,18 @@ def main() -> int:
     w = L.append
     w("# The falsification suite -- `BACKTEST_PROTOCOL.md` sections 6.3 and 6.4")
     w("")
-    w(f"Generated by `scripts/falsification_report.py` - config hash `{cfg_hash}` - "
-      f"fixture: synthetic EURUSD {YEARS[0]}-{YEARS[-1]} "
-      f"({sum(m.h4.n for m in markets):,} H4 bars).")
+    if real:
+        w(f"Generated by `scripts/falsification_report.py` - config hash `{cfg_hash}` - "
+          f"dataset hash `{dataset_hash[:16]}` - **real bars**: {len(order_units)} symbols, "
+          f"{is_years[0]}-{is_years[-1]} ({symbol_years} symbol-years, "
+          f"{markets_h4_bars:,} H4 bars), source `{source_label}`, `{price_side}` side.")
+        w("")
+        w(f"Split (PRE_REGISTRATION 4.1, Amendment 1): in-sample **{splits['in_sample']}**, "
+          f"out-of-sample {splits['out_of_sample']}, holdout {splits['holdout']}.")
+    else:
+        w(f"Generated by `scripts/falsification_report.py` - config hash `{cfg_hash}` - "
+          f"fixture: synthetic EURUSD {SYNTH_YEARS[0]}-{SYNTH_YEARS[-1]} "
+          f"({markets_h4_bars:,} H4 bars).")
     w("")
     w("Not a phase gate. Like the H5 study, this is a protocol study run out of the phase")
     w("sequence, so it reports findings and instrument validation rather than a gate verdict.")
@@ -249,7 +352,8 @@ def main() -> int:
     # -- the arms
     w("## The arms")
     w("")
-    w(f"Entry model {PRIMARY_MODEL.value}, pooled over {len(YEARS)} fixture years. ")
+    w(f"Entry model {PRIMARY_MODEL.value}, pooled over {symbol_years} "
+      f"{'symbol-years' if real else 'fixture years'}. ")
     w("`E/setup` is BACKTEST_PROTOCOL section 4.4's per-setup expectancy with a **shared")
     w("denominator**: every setup contributes, an unfilled one contributing 0.0. It is the")
     w("only unit in which arms with different fill rates are comparable.")
@@ -342,7 +446,8 @@ def main() -> int:
         w(f"## {label}")
         w("")
         w(f"Section 6.3: *\"Run with 20 random seeds and report the distribution, not one")
-        w(f"draw.\"* {len(per_seed)} seeds, each pooled over {len(YEARS)} years.")
+        w(f"draw.\"* {len(per_seed)} seeds, each pooled over {symbol_years} "
+          f"{'symbol-years' if real else 'years'}.")
         w("")
         w("| | min | p25 | median | p75 | max | mean |")
         w("|---|---:|---:|---:|---:|---:|---:|")

@@ -3354,3 +3354,89 @@ Phase 14.
 
 **That `M_eff` holds outside this split.** Recomputed in-sample, and it should not be
 recomputed out of sample to check (protocol §7).
+---
+
+## D-027 — Phase 14 on real bars: 102 trades, and the count is structural
+
+| | |
+|---|---|
+| **Date** | 2026-08-30 |
+| **Decided by** | Elie (instruction: *"run phase14_report on the real data"*) |
+| **Status** | ACTIVE |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample, H4 with the real M1 path |
+| **Report** | `reports/phase14_gate.md` — 10/10 checks PASS |
+
+### 1. The headline, and the only honest reading of it
+
+| | Limits off | Limits on |
+|---|---:|---:|
+| Trades | **102** | 57 |
+| Win rate | 30.4% | 33.3% |
+| **Expectancy (R)** | **−0.1869** | −0.1306 |
+| Total R | −19.06 | −7.44 |
+
+Expectancy CI: **[−0.423, +0.064] R** i.i.d., **[−0.382, +0.016] R** stationary block. Read
+the block row — trades are not independent and the i.i.d. resample understates uncertainty.
+
+**Both intervals span zero.** On the fixture that was a tautology; here it is a result, and
+the reading is exactly this: the point estimate is negative, the interval reaches into
+positive territory, and 102 trades cannot separate the two. **Neither evidence of edge nor
+evidence against it**, and not a number to quote in either direction.
+
+`n = 102` against `BACKTEST_PROTOCOL.md` §5.1's floor of **200 for a headline claim**, so no
+headline claim is made. This is also the in-sample split, where a positive result would carry
+no weight anyway.
+
+### 2. The trade count is structural, and that is the finding
+
+| Symbol | trades |
+|---|---:|
+| AUDUSD | 38 |
+| NZDUSD | 32 |
+| EURUSD | 19 |
+| GBPUSD | 13 |
+| the other six | **0** |
+
+**Reaching 200 trades in-sample is not a matter of waiting for more history.** The book is
+four symbols because the other six cannot be sized at all — every symbol whose quote currency
+is not the account currency, blocked by SPEC 18.2's missing-FX-rate rule while Q1 is open
+(D-026 §1). At this funnel rate the four sizeable symbols would need roughly eight more years
+to reach 200; the other six would need a conversion series and nothing else.
+
+So **Q1 now blocks the primary metric's sample size**, not merely the live-matching set. That
+is the third distinct thing Q1 has been found to block in two days, after the swap table and
+the cross-sectional criterion.
+
+### 3. A claim this report inherited was already false
+
+The funnel narrative said armed-to-filled is *"the opposing-sweep cancel, which D-013 §4
+measured as a fixture property: a random walk with up to 40 active levels produces sweeps at
+a rate no real market sustains"*. **D-025 §3 falsified that**: 0.44 confirmed sweeps per H4
+bar on real data against the fixture's 0.47. The cancel removes most limit orders here for
+the same reason it did on the fixture, and `cancel_if` clause 2 remains a FROZEN clause
+deciding the entry bake-off by itself.
+
+Corrected in the report. **Four further passages in its closing section are still
+fixture-framed** — including a repeat of the same "no real market sustains" claim — and are
+left for a follow-up rather than committed unverified, since checking a prose change here
+costs a full nine-minute run.
+
+### 4. One market at a time, for a measured reason
+
+The report runs ~19 variants over every market and the original built them all up front. Ten
+symbols × four years of M1 is **1.04 GB** measured, and `run` costs ~0.0s against
+`build_market`'s ~44s — so inverting the loops (build a market, run every variant on it, drop
+it) bounds memory at one symbol and costs nothing. Results are unchanged: `Pooled` concatenates
+per-market results in the same order.
+
+### 5. What this does not establish
+
+**Anything about out-of-sample performance.** This is the in-sample split; 2023-2024 and 2025
+were not read.
+
+**That the Monte Carlo FAILs mean anything beyond the expectancy CI.** Protocol §9's suite asks
+whether an edge survives perturbation. There is no demonstrable edge here to perturb, so the
+verdicts carry no information the headline interval did not already give.
+
+**That 102 trades support any per-model, per-session or per-symbol breakdown.** Every such cell
+in the report is smaller still, and the report marks the 30-99 band as suggestive only.

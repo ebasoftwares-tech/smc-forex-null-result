@@ -1,7 +1,7 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-28, after the falsification suite, the ablation matrix, the
-pre-registration, and the T2 fixes (D-019).
+Last updated: 2026-08-30, after real data landed (10 symbols, 2019-2025) and the Phase 9
+gate was re-run on it as a measurement rather than a projection (D-020).
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -30,14 +30,16 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 |---|---|
 | **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 |
 | **Studies complete** | H5 (SPEC 6.9), the falsification suite (protocol 6.3/6.4), the ablation matrix (6.5) |
-| **Pre-registration** | **COMMITTED at v1.1** — `docs/PRE_REGISTRATION.md`, blob `b9142a0fcb09` (D-018, re-registered by D-019). Only item 4's literal dates are outstanding, and they are fixed as a rule |
-| **Tests** | 660, all passing |
-| **Commits** | 17, on `master` |
+| **Pre-registration** | **COMMITTED at v1.1** — `docs/PRE_REGISTRATION.md`, blob `b9142a0fcb09` (D-018, re-registered by D-019). Item 4's literal dates are outstanding and now **DUE** — §4.1's rule was resolved against real history by the Phase 9 run (D-020 §7) |
+| **Data** | **Real bars in.** 10 symbols × 2019-2025 M1, `dataset_hash 2a2bb029`, source histdata, bid side, tzdata 2026.3. Splits: in-sample 2019-2022, OOS 2023-2024, holdout 2025. **Q2 answered; Q1 (broker) still open** |
+| **Tests** | 662, all passing |
+| **Commits** | 19, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 660 tests, ~115s
-.venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
+.venv/Scripts/python.exe -m pytest tests/          # 662 tests, ~107s
+.venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate, REAL bars (~9 min)
+.venv/Scripts/python.exe scripts/phase9_report.py --synthetic  # ... the original fixture
 .venv/Scripts/python.exe scripts/phase12_report.py  # the Phase 12 entry engine
 .venv/Scripts/python.exe scripts/phase13_report.py  # the Phase 13 risk layer
 .venv/Scripts/python.exe scripts/phase14_report.py  # the Phase 14 backtest engine
@@ -50,12 +52,12 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 
 | Phase | Scope | Gate report | Result |
 |---|---|---|---|
-| 1 | Data ingest, UTC timeframe construction, session engine | `reports/phase1_gate.md` | 11/11; broker reconciliation **BLOCKED** on Q1/Q2 |
+| 1 | Data ingest, UTC timeframe construction, session engine | `reports/phase1_gate.md` | 11/11; broker reconciliation **BLOCKED** on Q1 (Q2 answered — real bars ingested, and a resampler bug only they could find) |
 | 5 | H4 swing detection + market structure (BOS/CHoCH) | `reports/phase5_gate.md` | 7/7 |
 | 6 | Liquidity engine — sources, lifecycle, merge, rank | `reports/phase6_gate.md` | 8/8; sweep-rate half deferred to 7 |
 | 7 | Sweep detection + forward-return study (H2) | `reports/phase7_gate.md` | 7/7; closed Phase 6's deferred half |
 | 8 | Displacement + FVG detection | `reports/phase8_gate.md` | 8/8 |
-| 9 | CHoCH reference selection, MSS confirmation, **the funnel** | `reports/phase9_gate.md` | 10/10 — but see §3, the gate passes on a *projection* |
+| 9 | CHoCH reference selection, MSS confirmation, **the funnel** | `reports/phase9_gate.md` | **9/10 on real bars — the development-set half of the gate FAILS**, see §3 and D-020 |
 | — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, run out of order) | `reports/marginal_value.md` | 8/8 — instrument validated, **H5 open** |
 | 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 — two spec corrections, see D-011 |
 | 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 — **four variants are worth 1.77 tests**, see D-012 |
@@ -84,29 +86,45 @@ about the protocol's own acceptance criterion and about which components exist a
 ## 3. The Phase 9 result, which is the project's decision point
 
 Everything before Phase 9 produced candidates. Phase 9 asks the question the design rests
-on — how many tradable events does the sequence actually produce — and the answer is:
+on — how many tradable events does the sequence actually produce — and **since 2026-08-30 the
+answer is a measurement on real bars rather than a projection**:
 
-| Mode | Sweep→MSS | MSS / symbol-year | Projected universe (4y × 10) | Projected dev set (4y × 3) | Gate |
-|---|---:|---:|---:|---:|---|
-| `major` | **1.98%** | 12.7 | 507 | 152 | **PASS** (≥300 / ≥120) |
-| `micro` | 0.16% | 1.0 | 40 | 12 | **FAIL** |
+| Mode | Sweep→MSS | MSS / symbol-year | Universe (4y × 10) | Dev set (4y × 3) | Gate |
+|---|---:|---:|---|---|---|
+| `major` | **1.59%** | 9.2 | **368** — clears ≥300 | **97** — misses ≥120 | **FAIL** |
+| `micro` | 0.24% | 1.4 | 55 — misses | 16 — misses | **FAIL** |
 
-Four things to carry forward, and the first is the most important:
+Five things to carry forward, and the first is the whole result:
 
-1. **The gate passes on a projection, not a measurement.** No real bar has been ingested
-   (Q1/Q2 still open). What is measured is the *conversion rate*; what is reported is that
-   rate scaled to the stated universe. Recorded as **PASS on projection, BLOCKED on
-   measurement**.
-2. **1.98% is the number SPEC 11.7 named in advance** as the level at which the funnel
-   becomes a design finding. The design clears its gate by sitting exactly on the line the
-   specification drew, which is why the sensitivity tables are in the gate report.
-3. **`micro` is a pre-registered null.** It is a separate strategy (SPEC 11.1), not a
-   parameter that came out badly, and §10.2 forbids tuning it until it passes. Its
-   displacement filter rejects 709 of 780 CHoCH events — small breaks close to the sweep
-   extreme almost never clear 1.5 ATR.
-4. **The gate is not robust to `choch.max_reference_distance_atr`**, an ABLATION parameter:
-   2.0 fails the dev-set half, 3.0 and 4.0 pass. The default stays fixed. Knowing the PASS
-   is conditional is the licensed conclusion; moving the parameter is not.
+1. **The gate fails on its development-set half, which is the half that exists to catch
+   this.** 368 across the universe clears ≥300 with room; 97 on EURUSD/GBPUSD/USDJPY misses
+   ≥120. D-002 added that second half because *"a universe-wide count can hide a development
+   set too thin to iterate on"*, and hiding it is exactly what the pooled number does here.
+2. **The development set is the thin end of the universe by construction, not by luck.**
+   EURUSD converts at 1.11%, the lowest of all ten majors; the four best — NZDUSD, EURGBP,
+   AUDUSD, USDCAD — are all cross-set. Confirmed-sweep counts are nearly flat across the
+   universe (2,138-2,399), so this is a difference in conversion, not in raw material.
+   Adding symbols moves only the half that already passes, and swapping the development set
+   selects a split by its outcome (D-020 §2).
+3. **No registered parameter value rescues it.** `choch.max_reference_distance_atr` spans
+   the verdict again, but its registered range {2.0, 3.0, 4.0} yields 41 / 97 / 113 against
+   a floor of 120. Only 6.0 — outside the range — reaches it, and exactly. On synthetic the
+   PASS was conditional on this parameter; on real bars the FAIL cannot be undone by any
+   move that is actually available.
+4. **The projection overstated the universe by 38% and the development set by 57%.** That is
+   the size of error to expect from every other synthetic-fixture number in this file.
+5. **D-009's specification contradiction now decides a gate verdict.** 87 of 368 MSS fail
+   SPEC 6.6's leg clause — the one SPEC 11.5 omits while calling itself complete — so under
+   the 6.6 reading the universe is 281 and *both* halves fail. It was cost-free on synthetic
+   and is not now. Resolve it before quoting any Phase 10+ figure.
+
+**What the failure does not settle is what to do about it.** SPEC §9 states the consequence
+as *"the design is reconsidered before any entry code is written"*, and the entry code exists
+— Phases 10-14 were built while the gate stood on a projection. D-020 §8 sets out the four
+options and deliberately takes none of them.
+
+`micro` remains a pre-registered null (SPEC 11.1), not a parameter that came out badly, and
+§10.2 still forbids tuning it until it passes.
 
 ---
 
@@ -379,7 +397,7 @@ bot/research/   stats.py (shared primitives), sweep_study.py (H2),
 scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11,12,13,14}_report.py,
                 marginal_value_report.py, falsification_report.py,
                 ablation_report.py, regen_golden.py
-tests/          660 tests + tests/golden/structure_h4.json
+tests/          662 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -402,7 +420,9 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-019 record corrections and findings from each phase's implementation.
+D-004 through D-020 record corrections and findings from each phase's implementation.
+**D-020 is the one to read first**: it is the only entry written against real bars, and
+it is the one that turned Phase 9's PASS into a FAIL.
 
 ---
 
@@ -478,6 +498,10 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 64 | **The finished `LiquidityBook` cannot be read causally at all.** SPEC 8.8's merge rewrites a survivor's `price`, `tier` and `strength` **in place**. Use `book.active_at(bar)` / `ranks_at(bar)`, never a finished level. Third instance of D-009 §4 / D-011 §3 (D-019 §4). |
 | 65 | **A long targets BUY_SIDE liquidity, a short SELL_SIDE.** Inverted for the project's life, with six tests asserting the inversion; SPEC 17.1's worked example targets a PDH (BUY_SIDE) for a BUY LIMIT (D-019 §3). |
 | 66 | **`tp.min_target_rank = 5.0` was SELECTED BY ITS OUTCOME** on the synthetic fixture, by instruction (D-019 §6). It carries no evidence of being right. Re-derive it on real bars before any T2 comparison means anything. |
+| 67 | **The Phase 9 gate FAILS on real bars, on its development-set half** — 368 across the universe (clears ≥300) against 97 on the three development symbols (misses ≥120). A pooled count hides it, which is the exact failure D-002 added that half to expose (D-020 §1). |
+| 68 | **EURUSD is the worst sweep→MSS converter of all ten majors** (1.11% against NZDUSD's 2.02%), so the development set is the thin end of the universe by construction. Adding symbols cannot fix the failing half; swapping the development set selects a split by its outcome and empties the cross-sectional test (D-020 §2). |
+| 69 | **No registered value of `choch.max_reference_distance_atr` clears the development gate** — {2.0, 3.0, 4.0} give 41 / 97 / 113 against 120, and only the unregistered 6.0 reaches it, exactly. On synthetic this parameter spanned the verdict; on real bars the rescue is not available (D-020 §3). |
+| 70 | **SPEC 6.6 versus 11.5 now decides a gate verdict.** 87 of 368 MSS fail the leg clause 11.5 omits, so adopting 6.6 takes the universe to 281 and both halves fail. D-009 priced it as cost-free on synthetic data; it is not cost-free now (D-020 §4). |
 
 ---
 
@@ -572,8 +596,10 @@ caught it. Four mutations were run against the new suite and all four are now ca
 
 ## 8. The honest limitation
 
-**Every number produced so far comes from a synthetic random walk.** It has no liquidity,
-no participants and no structure, so:
+**Every number in this file except Phase 9's still comes from a synthetic random walk.**
+Real bars landed on 2026-08-30 and only the Phase 9 funnel has been re-run on them so far
+(§3, D-020); every other report below is still the fixture until it is re-run. The
+fixture has no liquidity, no participants and no structure, so:
 
 - Sweep counts, rates, distributions, rejection rates and now the MSS funnel are
   properties of *the detectors meeting noise*. They prove the engines are deterministic,
@@ -581,9 +607,11 @@ no participants and no structure, so:
 - The forward-return study correctly finds **nothing**, at every horizon. Had it found an
   edge, the study would be broken.
 - **H2 is neither supported nor refuted.** It cannot be, on this data.
-- **Phase 9's gate verdict is a projection built on that rate**, and the projection also
-  assumes symbols are interchangeable and years stationary. Both are false; the ten majors
-  are heavily correlated, so the effective sample is smaller than the count.
+- **Phase 9 has left this list.** Its gate is a measurement now, and it FAILS (§3). The
+  projection it used to rest on overstated the universe by 38% and the development set by
+  57% — the size of error to expect from the rest. What survives unchanged is the
+  correlation caveat: the ten majors are heavily correlated, so the effective sample is
+  smaller than the count, and the gate is stated in counts.
 - **The H5 study validates its own instrument and nothing else.** A `DIFFERENT` verdict
   on this fixture would mean it is broken. Its power arithmetic is the one output that
   transfers (§3a).
@@ -638,11 +666,15 @@ strategy result.
 
 ## 9. What to do next
 
-Phase 9 was the decision point and it did not stop the project. The H5 study that
-followed it is built, validated and **open** — it cannot be answered on synthetic data,
-and one of its findings is that part of it may not be answerable on real data either
-(§3a). So the design stands and the next phases are the ones that turn an event into a
-trade.
+Phase 9 was the decision point, it has now been answered on real bars, and **it did not
+pass** (§3, D-020): the universe half clears, the development-set half misses by 23, and
+no registered parameter value closes the gap. That is a live decision rather than a
+formality, and it lands on top of H5 — built, validated and **open**, and whose own
+finding was that part of it may not be answerable even on real data (§3a). A 97-event
+development sample is smaller than H5's power arithmetic assumed.
+
+D-020 §8 sets out the four ways forward and takes none of them. What follows assumes the
+project continues in some form, because most of it is worth doing under any of them.
 
 ### The whole of `BACKTEST_PROTOCOL.md` §6 is built
 
@@ -677,26 +709,28 @@ on a random walk it varies only by noise, so it has never been run at all.
 
 ### Still blocking real results
 
-**Q1 (broker/account currency) and Q2 (M1 or tick history).** Answered in principle by
-D-003 — raw-spread ECN, Dukascopy tick + broker M1 — but no data has been downloaded and
-no broker chosen. Until then:
+**Q2 is answered.** `data/parquet` holds 10 symbols × 2019-2025 M1 from HistData,
+`dataset_hash 2a2bb029`, and Phase 9 has been re-run against it (§3, D-020). **Q1 (broker
+and account currency) is still open**, and it now blocks a smaller and more specific set
+of things than it used to:
 
-- Phase 1's broker-candle reconciliation stays BLOCKED.
-- Phase 9's gate stays PASS-on-projection.
-- H5 stays open: on a random walk the true MSS vs CHoCH-not-MSS difference is zero by
-  construction, so the study can only ever validate its own instrument.
-- **H3 and H4 stay open for the same reason** — the falsification suite is built and every
-  arm's verdict is a property of the fixture, not of the market (§3d).
-- Every study runs on synthetic data and can only validate instruments, not measure edge.
+- Phase 1's broker-candle reconciliation stays BLOCKED — although protocol §2's two-source
+  check did pass against Dukascopy on a sample day during ingest.
+- The spread and swap tables stay declared rather than measured: `cost.swap_pips_per_day`
+  is empty, so every cost figure is a default and the reports say so.
+- H2-H5 stay open, but **no longer for want of data** — the studies simply have not been
+  re-run on real bars yet.
 
-**This is still the single highest-value action in the project.** Six engines and three
-studies are built, and none of their numbers mean anything about markets yet.
+**Re-running the studies on real bars is now the highest-value action**, and §3's failing
+gate is what they have to be read against: a development set of 97 events is the sample
+every in-sample study is working with, which is smaller than any of their power
+arithmetic assumed.
 
-### When real data lands, run these in this order
+### Now that real data has landed, run these in this order
 
-1. **`scripts/phase9_report.py`** — the funnel on real bars. The gate's PASS is currently
-   a projection from a synthetic conversion rate; this replaces it with a measurement,
-   and the ABLATION sensitivity in §3 means the verdict could genuinely go either way.
+1. ~~**`scripts/phase9_report.py`**~~ — **DONE, 2026-08-30 (D-020).** The verdict went the
+   way §3's ABLATION sensitivity warned it might: universe PASS, development set FAIL.
+   Re-run after any change to the funnel; it now takes ~9 minutes.
 2. **`scripts/phase11_report.py`** — recompute `M_eff` for the OB definitions. It is a
    property of how the four behave on *this* fixture; real bars have trends and gaps and
    the definitions may diverge more there. Every later correction depends on this number.

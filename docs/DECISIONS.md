@@ -2477,3 +2477,208 @@ new-registration trigger. Honoured: the pre-registration is superseded at **v1.1
 the old blob hash recorded, the reason stated, and the provenance carried in full. Its own
 rule that nothing may change after the first OOS evaluation is not engaged, because there
 has not been one.
+---
+
+## D-020 — The Phase 9 gate on real bars: the universe passes, the development set does not
+
+| | |
+|---|---|
+| **Date** | 2026-08-30 |
+| **Decided by** | Elie (instruction: *"run phase9_report on the real data"*) |
+| **Status** | ACTIVE |
+| **Supersedes** | The PASS recorded in `STATE.md` §3 and in the gate report at `d2bcf76`, which was a projection |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019–2022 in-sample, H4, histdata, bid |
+| **Report** | `reports/phase9_gate.md` |
+
+Phase 9's gate had been passed on a **projection**: a sweep→MSS conversion rate measured on
+one synthetic symbol, scaled to ten symbols and four years. Real bars replace the scaling
+with a count.
+
+### 1. The gate fails, and on the half that was added to catch exactly this
+
+| | Synthetic projection | Real measurement | |
+|---|---:|---:|---|
+| Sweep → MSS conversion | 1.98% | **1.59%** | ×0.80 |
+| MSS per symbol-year | 12.7 | **9.2** | ×0.72 |
+| Universe MSS (≥ 300) | 507 | **368** | PASS |
+| Development-set MSS (≥ 120) | 152 | **97** | **FAIL** |
+
+The universe half clears with room. The development-set half misses by 23, and that half of
+the gate is not decoration — SPEC §9's phase table records why it exists:
+
+> *"The second half of the gate was added by D-002: H4-only confirmation thins the funnel,
+> and a universe-wide count can hide a development set too thin to iterate on."*
+
+**The failure mode is the one the clause was written to expose, arriving exactly as
+described.** A pooled count of 368 does hide it; the gate's second half is what makes it
+visible.
+
+`micro` fails both halves decisively (55 universe, 16 development), which is the third
+consecutive run in which the pre-registered `micro` variant produces a null. That remains a
+result about a variant, not a parameter to be tuned (SPEC 11.1, §10.2).
+
+### 2. The development set is the worst end of the universe, not an unlucky draw
+
+| Symbol | Set | Confirmed sweeps | CHoCH | MSS | Sweep → MSS |
+|---|---|---:|---:|---:|---:|
+| NZDUSD | cross | 2,322 | 638 | 47 | 2.02% |
+| EURGBP | cross | 2,399 | 581 | 45 | 1.88% |
+| AUDUSD | cross | 2,259 | 602 | 43 | 1.90% |
+| USDCAD | cross | 2,335 | 564 | 40 | 1.71% |
+| GBPUSD | **dev** | 2,328 | 543 | 37 | 1.59% |
+| USDJPY | **dev** | 2,138 | 532 | 34 | 1.59% |
+| USDCHF | cross | 2,345 | 551 | 32 | 1.36% |
+| EURJPY | cross | 2,317 | 543 | 32 | 1.38% |
+| GBPJPY | cross | 2,327 | 581 | 32 | 1.38% |
+| EURUSD | **dev** | 2,348 | 536 | 26 | 1.11% |
+
+**EURUSD is the lowest converter of all ten symbols**, and the four best are all in the
+cross-sectional set. The confirmed-sweep counts are nearly flat across the universe
+(2,138–2,399), so this is not a difference in how much the funnel has to work with — it is a
+difference in conversion.
+
+That matters for what a remedy could look like. The development set is a *named* three
+(protocol §2.1, pre-registration §4.2), chosen on liquidity grounds before any of this was
+measured, and the gate's second half exists precisely because iteration happens on those
+three. So:
+
+- **Adding symbols cannot fix the failing half.** It moves the universe count, which already
+  passes.
+- **Swapping the development set to the three best converters would be selecting a split by
+  its outcome**, which §10.2 prohibits — and it would also empty the cross-sectional test of
+  meaning, since pre-registration §4.2's whole claim is transfer to seven *unseen* pairs at
+  the same parameters.
+
+### 3. Nothing inside the registered range reaches the threshold
+
+`choch.max_reference_distance_atr`, registered ABLATION over {2.0, 3.0, 4.0}:
+
+| Value | Universe MSS | Sweep → MSS | Development-set MSS |
+|---|---:|---:|---:|
+| 2.0 | 145 | 0.63% | 41 |
+| 3.0 (default) | 368 | 1.59% | **97** |
+| 4.0 | 446 | 1.93% | **113** |
+| 6.0 (unregistered) | 466 | 2.02% | 120 |
+
+On synthetic data this parameter **spanned the verdict** — 2.0 failed the development half,
+3.0 and 4.0 passed — and `STATE.md` §3 recorded the PASS as conditional on it for that
+reason. On real bars every registered value fails: 41, 97, 113 against a floor of 120. Only
+6.0, outside the registered set, reaches the threshold, and it reaches it *exactly*.
+
+> **The parameter that spans the verdict is registered ABLATION, and on real bars none of its
+> registered values clears the gate.** The move that would rescue the PASS is not available
+> even to someone willing to make it.
+
+This is a stronger statement than the synthetic run could support, and it is why this FAIL is
+not a near miss to be argued down. It is also the cleanest illustration in the project of why
+§10.2 is written as a prohibition rather than a preference: a single out-of-range value lands
+on the threshold to the unit.
+
+### 4. D-009's specification contradiction stops being cost-free
+
+SPEC 6.6 requires the swept level to lie beyond the extreme of the leg that produced the
+CHoCH. SPEC 11.5 enumerates the MSS conditions, calls itself complete, and omits it. D-009
+adopted 11.5 as operative and priced the other reading rather than arguing it — and on the
+synthetic fixture the price was small enough to record that *"the two readings of the
+specification agree on the decision Phase 9 exists to make"*.
+
+They no longer agree:
+
+| Reading | Universe MSS | vs 300 | Development-set MSS | vs 120 |
+|---|---:|:--:|---:|:--:|
+| SPEC 11.5 (operative) | 368 | PASS | 97 | FAIL |
+| SPEC 6.6 additionally applied | **281** | **FAIL** | not broken out | — |
+
+**87 of 368 MSS fail the 6.6 clause**, so adopting it takes the universe half under its floor
+as well. Which section is operative now decides a gate verdict, not a footnote.
+
+Two consequences. **It has to be resolved on its merits before any Phase 10+ figure is
+quoted**, because every downstream population is this one. And the run did not break the 6.6
+cost out by symbol set, so the development-set number under that reading is unmeasured —
+worth adding when it is resolved, since it is the half already failing.
+
+### 5. What did not change
+
+**No parameter was moved.** §10.2 forbids choosing a value by looking at the outcome, and
+that binds hardest exactly here: one unregistered value converts a FAIL into a PASS at
+precisely the threshold. The defaults stand, the gate reads FAIL, and the report says so
+before it says anything else.
+
+**The pre-registration was not amended** — see §7.
+
+### 6. The TUNABLE is inert on real bars too, so D-008 §4 survives contact with data
+
+| `choch.max_bars_after_sweep` | Universe MSS | Development-set MSS |
+|---|---:|---:|
+| 4 | 315 | 75 |
+| 8 | 368 | 97 |
+| 12 (default) | 368 | 97 |
+| 18 | 368 | 97 |
+| 24 | 368 | 97 |
+
+Median sweep-extreme-to-MSS distance is **2 bars**, the maximum observed is **8**, and **0.0%**
+of MSS sit at the window edge. The window admits events; it does not manufacture them, and
+above 8 it does nothing at all.
+
+D-008 §4 recorded that the registered TUNABLE/ABLATION split did not match which parameter
+actually decides the outcome, and flagged that the finding was measured on a random walk and
+had to be re-measured on real bars before being trusted. **Re-measured, and it holds**: the
+TUNABLE is inert over most of its grid while an ABLATION parameter spans the verdict. Both
+observations that produced D-008 §4 now have real-data support, so the classification is
+wrong on its own terms rather than as an artefact of the fixture.
+
+This also qualifies D-002's timescale reading the same way the synthetic run did, and by a
+wider margin: the window permits two trading days, the observed median is **8 hours**.
+
+### 7. How it was run, and the one methodological choice inside it
+
+`scripts/phase9_report.py` now reads `data/parquet` by default; `--synthetic` reproduces the
+original fixture into `reports/phase9_gate_synthetic.md`, so the instrument stays runnable.
+
+- **The split is derived from the rule, not typed in.** `acquired_years()` reads the manifest
+  and `split()` applies pre-registration §4.1 — earliest four years in-sample, next two
+  out-of-sample, remainder holdout — resolving to **2019–2022 / 2023–2024 / 2025**. Nothing
+  outside the in-sample years was read.
+- **Each symbol is one continuous four-year pass, not four yearly ones.** Yearly passes would
+  restart the liquidity book, the structure state and every warm-up on 1 January — losing a
+  level created in December and swept in January, and blinding the first weeks of each year.
+  They would also put D1 under `swing.min_history` (250 bars against ~260 D1 bars in a year),
+  leaving the swing engine cold for a meaningful share of every run. The calendar year
+  survives as a reporting breakdown, taken from each sweep's own timestamp.
+- **Suspect data is reported, not dropped** (SPEC 1.5): 517 of 23,116 decided opportunities
+  (2.24%) and 6 of 368 MSS (1.63%) sit on a suspect bar. Excluding them leaves 362, still
+  over 300 — so no gate verdict turns on the choice. This row could not exist before; the
+  synthetic fixture has no gaps.
+- 662 tests green.
+
+**Item 4 of the pre-registration is now due.** §4.1's rule was applied to real history for the
+first time by this run. The document schedules stamping the literal dates as an amendment
+under §10 *before the first run*, and that has not been done here: it is a change to a
+committed pre-registration, it changes no threshold and no grid, and it is a governance act
+rather than a mechanical one.
+
+### 8. What this entry does not decide
+
+SPEC §9 states the gate's consequence as *"the design is reconsidered before any entry code is
+written"*. **The entry code exists** — Phases 10 through 14 were built while the gate stood on
+a projection — so the clause's trigger has fired after the event it was written to precede.
+That is itself the cost of passing a gate on a projection, and it is recorded rather than
+worked around.
+
+What the reconsideration should conclude is not decided here. The options are visible and each
+has a price:
+
+1. **Accept a thinner development set** and carry the reduced power explicitly into every §6
+   study's MDE — 97 events, against the H5 arithmetic in `STATE.md` §3a which already showed
+   the 12-bar horizon out of reach at a larger count.
+2. **Re-open D-002** (H4 confirmation for every tier), which is the design decision that
+   thins the funnel. §6.5 names `liq.tier_confirmation_tf` as its counterfactual and D-017 §1
+   found that parameter **declared and read by nothing**, so the alternative still cannot be
+   measured. Testing it means implementing it first.
+3. **Treat the universe count as the operative gate** and record the development half as a
+   known, quantified deficiency carried into every later claim.
+4. **A new pre-registration with a different development set** — which is selecting a split by
+   its outcome unless justified on grounds independent of these numbers.
+
+None is taken. What the run establishes is that the choice is now a real one, made against a
+measurement instead of an extrapolation.

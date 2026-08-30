@@ -2212,3 +2212,129 @@ it is not D-016 §1's cost confound; it is one try out of 34.
 This is the project's recurring statistical lesson arriving where it was designed to be
 caught rather than where it was designed to be missed: Phase 7 saw 3 of 20 tests fire on a
 random walk, and section 5.6's correction exists for exactly this. **Every default stands.**
+
+---
+
+## D-018 — The pre-registration, and a configuration count that was wrong three ways
+
+| | |
+|---|---|
+| **Date** | 2026-08-28 |
+| **Status** | ACTIVE |
+| **Trigger** | Writing `BACKTEST_PROTOCOL.md` §1's pre-registration (`docs/PRE_REGISTRATION.md`, `bot/research/preregistration.py`) |
+
+§1 requires the pre-registration *"before the first strategy backtest"*. Nothing has
+triggered it yet — every run so far has been on a random walk and validated an instrument
+rather than measured a strategy — which is exactly why now is the only honest moment to
+write it. **A pre-registration written after seeing a result is not one.**
+
+Six of the seven items were already determined by existing documents. Writing them down
+turned up one problem that would have corrupted every significance claim the project ever
+makes, and forced three decisions that §1 requires be closed in advance.
+
+### 1. `M` was wrong three ways, and `M` scales every significance claim
+
+`M` — the configuration count — feeds the Deflated Sharpe Ratio and §5.6's expected-maximum-
+Sharpe-under-the-null. It is the number that discounts the best in-sample result against
+what pure noise would have produced with the same number of tries. `PARAMETERS.md` §2
+states it three mutually inconsistent ways, and none can be reproduced from the schema:
+
+| | `PARAMETERS.md` §2 | The schema that runs |
+|---|---|---|
+| TUNABLE parameters | 8, including `bias.min_score` | **7** — six gridded plus `risk.pct_per_trade`; there is **no `bias` section at all** |
+| `disp.min_leg_atr` grid | 5 values | **6** — the schema includes `0 (off)` |
+| Stated product | `5 × 4 × 5 × 5 × 4 × 4 × 5 = 8,000` | that product is **40,000**; 8,000 is the product *without* the trailing `× 5` |
+| Declared `M` | **6,912**, "after removing dominated combinations" | **no rule for "dominated" is stated anywhere**, so it cannot be recomputed by anyone |
+
+**`M = 9,600`**, the full Cartesian product of the grids the schema itself declares, for
+three reasons:
+
+1. **It is reproducible.** A number nobody can recompute is not a pre-registration.
+2. **It is conservative.** A larger `M` discounts harder, which is the only direction that
+   cannot flatter the outcome.
+3. **"Dominated" is a judgement about results.** Deciding which configurations could not
+   have won requires knowing how they perform — the knowledge a pre-registration is
+   written before having.
+
+**It is computed, not typed.** `bot/research/preregistration.py` holds the grid and
+`tests/test_preregistration.py` parses the `TUNABLE {…}` declarations back out of the
+schema field descriptions and fails if the two diverge — plus a test that the *document*
+states the `M` the code computes. Writing a second document that could drift from the
+schema would have reproduced the exact failure being corrected here.
+
+`PARAMETERS.md` §2 and `BACKTEST_PROTOCOL.md` §5.6 are amended in place with pointers,
+rather than silently rewritten, because their figures have been cited elsewhere.
+
+**One grid point is genuinely disputable and is recorded as such.** `disp.min_leg_atr = 0`
+is labelled `0 (off)` and is arguably an ablation rather than a tune; reading it that way
+gives `M = 8,000`. It is counted, on the conservative principle above, and the alternative
+is written down so that adopting it later is visibly a change to a declared number.
+
+**`risk.pct_per_trade` is excluded provably rather than by convention.** SPEC 18.1 makes
+`position_size` a pure function of `(equity, risk_pct, sl_distance)`, so risk percent scales
+PnL and cannot move R — and R-expectancy is the primary metric. Sweeping it would sweep a
+parameter that cannot change the number under test. Asserted against the real sizing
+function, not quoted from the spec.
+
+**`bias.min_score` is deferred, and its arrival is named as a re-registration trigger**: it
+would take `M` to 48,000 and supersede every correction computed under 9,600.
+
+### 2. Item 4 is fixed as a rule, because it cannot honestly be fixed as dates
+
+No data has been acquired (Q1/Q2). §2.1's table is written *"assuming 2019-01 → 2025-12
+available"*. Inventing dates would be worse than fixing none, and leaving the item blank
+until the data arrives would mean completing the pre-registration **after** seeing the
+sample — the one thing it exists to prevent.
+
+So the split is a rule: **the earliest 4 years in-sample, the next 2 out-of-sample, the
+remainder holdout**, chronological and non-negotiable, over a period that must contain 2020,
+2022 and one extended range regime. A rule is as binding as a date and yields exactly one
+answer. The literal dates are stamped mechanically at acquisition and committed as an
+amendment that changes no threshold, no grid and no decision rule.
+
+### 3. D-016 §1 is closed: the falsification row is judged in **both** currencies
+
+D-016 left this open and §1 requires it closed before the first run.
+
+> The full model must beat every §6.3/§6.4 control in **gross R *and* net R**, each by a
+> margin whose CI excludes zero.
+
+Neither alone is defensible. **Net R alone can be cleared on stop width** — proved on a
+random walk, where the true difference is zero by construction and the baseline still
+cleared the bar by +0.125 R (CI [0.019, 0.229]) because its median stop is 2.24 ATR against
+`sweep_only`'s 0.96; in gross R the same comparison is +0.018, CI [−0.084, 0.123]. **Gross R
+alone** ignores that a strategy has to pay its costs to be worth trading.
+
+The two rejected alternatives — gross-only, and matching stop distance across arms — are
+recorded in the document so that adopting either later is visibly a change. Matching stops
+is the more tempting and the worse: a sweep-only arm with the baseline's stop is not "enter
+on sweep confirmation", so it changes what the control *is*.
+
+### 4. `INCONCLUSIVE` is defined as a verdict distinct from `FAIL`
+
+§10.1 is binary — all eleven rows must hold — and §10.2 covers "not met", so without this
+the case where the sample was too small to look gets filed as a failure to find an edge.
+
+> **INCONCLUSIVE**: fewer than 200 OOS trades, **or** the primary metric's minimum
+> detectable effect at 80% power exceeds the +0.10 R it is being tested against.
+
+The second clause is the operative one. **A study that could not have detected the effect it
+requires has not failed to find it — it has failed to look**, and reporting that as FAIL
+claims knowledge the sample does not contain. This project has already learned the same
+lesson three times (Phase 7's 3-of-20 false positives, Phase 8's 0.6σ "structure", H5's
+`UNDERPOWERED`-is-not-`EQUIVALENT`); declaring it in advance is what stops it being
+relitigated once a disappointing number is on the page.
+
+### 5. What the pre-registration declares it cannot evaluate
+
+Named in advance so that none of it can later be presented as a discovery: H6 (no bias
+engine), the D-002 counterfactual (`liq.tier_confirmation_tf` read by no module), the
+session and killzone filters (not implemented), T2 and T3 (arm no trades at the shipped
+defaults), `ob.definition` (inert at the defaults), §5.5's plateaus (never run — a plateau
+needs a metric that varies across the grid, and on a random walk it varies only by noise),
+and the Phase 9 funnel gate (passes on a projection, not a measurement).
+
+**No default was changed to make any of these evaluable.** §10.2 forbids moving a parameter
+to make a result appear; moving one *before* any result exists is a different act, but it is
+still a specification change and belongs in a registration of its own. All four are listed
+as named new-registration triggers instead.

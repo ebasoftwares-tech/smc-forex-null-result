@@ -43,6 +43,16 @@ These, and only these, may be optimised.
 | `risk.pct_per_trade` | 0.35% | 0.10–0.50% | §18.3 | Bounded by the brief. Scales the equity curve, not the edge — reported, never "optimised" for return |
 | `bias.min_score` | 2 | 0, 1, 2, 3, 4 | §7.5 | How much MTF agreement is required. `0` is equivalent to the `none` control |
 
+> **SUPERSEDED — see `docs/PRE_REGISTRATION.md` §5 (DECISION D-018).** The paragraph below
+> is wrong three ways and is kept only because its figures have been cited elsewhere in the
+> project. `bias.min_score` is not in the schema (Phases 2–4 unbuilt), so there are **six**
+> gridded parameters and not eight; `disp.min_leg_atr` has **six** grid points in the schema
+> (it includes `0 (off)`), not five; and the product written below evaluates to 40,000 while
+> the total stated is 8,000 — the trailing `× 5` for `bias.min_score` is in the
+> multiplication but not in the result. **`M = 9,600`**, computed from the schema's own
+> grids by `bot/research/preregistration.py` and pinned by a test that parses them back out
+> of the field descriptions. The 6,912 has no stated derivation and cannot be recomputed.
+
 Grid size: 5 × 4 × 5 × 5 × 4 × 4 × (risk excluded from the grid — it is a scaling choice, not an
 edge parameter) × 5 = **8,000** configurations at most; **6,912** after removing dominated
 combinations. Every one of them is a test, and the correction in `BACKTEST_PROTOCOL.md` §5.6

@@ -9,6 +9,10 @@ clean, reportable outcome rather than a prompt to keep tuning.
 
 ## §1. Pre-registration
 
+> **Written and committed: `docs/PRE_REGISTRATION.md`** (DECISION D-018). Six of the seven
+> items below are fixed there; item 4's literal dates are fixed as a *rule* and stamped
+> mechanically at data acquisition, before the first run.
+
 **Before the first strategy backtest is run**, a pre-registration file is committed and its
 hash recorded. It states:
 
@@ -227,8 +231,10 @@ works at very specific parameters must be flagged.
 
 ### 5.6 Multiple-testing correction
 
-With `M` configurations evaluated (declared in the pre-registration, §2 of `PARAMETERS.md`
-computes `M = 6,912`):
+With `M` configurations evaluated — **declared in `docs/PRE_REGISTRATION.md` §5 as
+`M = 9,600`**, computed from the schema's own grids and pinned by a test. (`PARAMETERS.md`
+§2's `6,912` is superseded: it has no stated derivation and its arithmetic disagrees with
+itself and with the schema. See DECISION D-018.):
 
 - **Deflated Sharpe Ratio** (Bailey & López de Prado) using `M`, the trade-return skew and
   kurtosis, and the sample length. Reported next to every raw Sharpe.

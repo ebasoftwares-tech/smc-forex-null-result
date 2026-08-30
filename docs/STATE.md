@@ -1,6 +1,7 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-28, after the falsification suite and the ablation matrix.
+Last updated: 2026-08-28, after the falsification suite, the ablation matrix and the
+pre-registration.
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
@@ -28,13 +29,14 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | | |
 |---|---|
 | **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 |
-| **Studies complete** | H5 (SPEC 6.9), the falsification suite (protocol 6.3/6.4), **the ablation matrix (6.5)** |
-| **Tests** | 633, all passing |
-| **Commits** | 15, on `master` |
+| **Studies complete** | H5 (SPEC 6.9), the falsification suite (protocol 6.3/6.4), the ablation matrix (6.5) |
+| **Pre-registration** | **COMMITTED** — `docs/PRE_REGISTRATION.md`, blob `7f8d363a6953` (D-018). Only item 4's literal dates are outstanding, and they are fixed as a rule |
+| **Tests** | 652, all passing |
+| **Commits** | 16, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 633 tests, ~110s
+.venv/Scripts/python.exe -m pytest tests/          # 652 tests, ~110s
 .venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate
 .venv/Scripts/python.exe scripts/phase12_report.py  # the Phase 12 entry engine
 .venv/Scripts/python.exe scripts/phase13_report.py  # the Phase 13 risk layer
@@ -370,11 +372,12 @@ bot/research/   stats.py (shared primitives), sweep_study.py (H2),
                 marginal_value.py (H5), fvg_study.py (SPEC 12.6),
                 ob_study.py (SPEC 13.8), risk_study.py (SPEC 18.9),
                 falsification.py (protocol 6.3/6.4 -- the five controls),
-                ablation.py (protocol 6.5 -- the matrix)
+                ablation.py (protocol 6.5 -- the matrix),
+                preregistration.py (protocol 1 -- the grid, M, the splits)
 scripts/        build_dataset.py, phase{1,5,6,7,8,9,10,11,12,13,14}_report.py,
                 marginal_value_report.py, falsification_report.py,
                 ablation_report.py, regen_golden.py
-tests/          633 tests + tests/golden/structure_h4.json
+tests/          652 tests + tests/golden/structure_h4.json
 ```
 
 `bot/core/` is pure: no I/O, no clock, no broker. That is what makes the causality tests
@@ -397,7 +400,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-017 record corrections and findings from each phase's implementation.
+D-004 through D-018 record corrections and findings from each phase's implementation.
 
 ---
 
@@ -466,6 +469,9 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 57 | **A paired ablation uses a sign-flip permutation, never the pooled two-sample test**, which discards the pairing — the power it was for. Median MDE 0.076 R paired against 0.181 R unpaired (D-017 §6/§7). |
 | 58 | **`ob.definition` reaches the engine only via `cfg`; it was a hardcoded literal for four phases**, so OB-B/C/D had never run end to end. Fixed, and still inert at the shipped defaults because entry C and stop S1 consume no order block (D-017 §2). |
 | 59 | **`tp.min_target_rank = 2.0` makes T2 arm nothing** — a fifth default that cannot fire, on top of D-014's four, and the only target model that aims at a liquidity level (D-017 §3). |
+| 60 | **`M = 9,600`, not `PARAMETERS.md`'s 6,912 or 8,000.** It is computed from the schema's own grids by `preregistration.py` and pinned by a test that parses them back out of the field descriptions. `M` scales the Deflated Sharpe and §5.6's null, so a wrong one mis-corrects every claim (D-018 §1). |
+| 61 | **The pre-registration is committed and its blob hash is in §2.** Changing a threshold, a grid, `M`, or a decision rule in it is **not an amendment** — it is a new pre-registration, and every result under the old one is reported as such (D-018). |
+| 62 | **`INCONCLUSIVE` is a verdict, not a soft FAIL**: fewer than 200 OOS trades, or an MDE exceeding the +0.10 R being tested for. A study that could not have seen the effect has failed to look, not failed to find (D-018 §4). |
 
 ---
 
@@ -709,18 +715,22 @@ studies are built, and none of their numbers mean anything about markets yet.
 
 ### Before the first real backtest
 
-1. **Settle D-016 §1** — whether §10.1's falsification row is judged in gross R, net R,
-   or both. It has to be decided in the pre-registration, because after a result is seen
-   the choice selects the answer (§10.2). The suite reports both and takes no position.
-2. **Write the pre-registration** (`BACKTEST_PROTOCOL.md` §1) and commit its hash. It is
-   due before the first *strategy* backtest — a synthetic run validates an instrument, so
-   nothing so far has triggered it. Six of its seven items are already determined by
-   existing documents; only the date ranges wait on the data. **A pre-registration written
-   after seeing a result is not one.**
-3. **Take the four D-014 decisions**, or the ablation grid has holes: T3 arms on no setup
-   at the default `min_rr`, T4 runs on a different population from T1–T2, and two SPEC 18
-   safety checks are inert.
-4. **Build `events.jsonl`** (SPEC 21.1). The engine currently holds trades and rejections
+**The pre-registration is written and committed** — `docs/PRE_REGISTRATION.md`, D-018. It
+closes D-016 §1 (the falsification row is judged in **both** gross and net R), declares
+**`M = 9,600`** against `PARAMETERS.md`'s unreproducible 6,912, fixes the splits as a rule
+rather than as invented dates, and defines `INCONCLUSIVE` as a verdict distinct from FAIL.
+What is left:
+
+1. **Stamp item 4's literal dates** from §4.1's rule at data acquisition, and commit them
+   as an amendment **before the first run**. It changes no threshold, no grid and no
+   decision rule — it is the one mechanical step the document schedules for itself.
+2. **Decide whether to make T2 and T3 testable at all.** Both arm zero trades at the
+   shipped defaults (`tp.min_target_rank`, `tp.min_rr`), so §6.5's "each TP model" row is
+   T1 vs T4 and H7's target half is unanswerable. The pre-registration deliberately
+   changes **no default** and lists this as a new-registration trigger instead — moving a
+   parameter before any result exists is not §10.2's prohibited act, but it is still a
+   specification change and is the user's call, not a quiet fix.
+3. **Build `events.jsonl`** (SPEC 21.1). The engine currently holds trades and rejections
    in memory and the report reads them there, which inverts the specification's
    relationship — the log is the primary artefact and the tables are derived from it. Fine
    while one process does both; a blocker for Phase 16, which reconciles a live log against

@@ -3559,3 +3559,109 @@ costs another ~52-minute run and was not done. **Treat that one cell as unverifi
 the wall clock and nothing else — verified before use against a serial run on one symbol ×
 2 seeds (identical but for a pytest timing string) and two symbols × 1 seed
 (byte-identical). `--workers 1` forces the serial path.
+---
+
+## D-029 — The ablation matrix on real bars: every default stands, and a prediction fails
+
+| | |
+|---|---|
+| **Date** | 2026-08-31 |
+| **Decided by** | Elie (instruction: *"run the ablation matrix on the real data"*) |
+| **Status** | ACTIVE |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample, 64,228 H4 bars, 12,350 trading days |
+| **Report** | `reports/ablation.md` — 34 runnable variants over §6.5's 19 components |
+
+Baseline: **1,616 setups, 267 filled, E/setup −0.0118 R.**
+
+### 1. Every default stands, and the closest call is a miss by 0.002
+
+Three rows clear §6.5's raw rule (a CI excluding zero). None survives Benjamini-Hochberg
+across the matrix at q = 0.10:
+
+| Row | delta (net R) | 95% CI | p | BH q |
+|---|---:|---|---:|---:|
+| `tp.model = T4` | +0.0188 | [0.0044, 0.0340] | 0.003 | **0.102** |
+| `entry.model = D` | −0.0203 | [−0.0401, −0.0013] | 0.018 | 0.306 |
+| `manage.be_trigger_r = 1.5` | −0.0023 | [−0.0055, −0.0000] | 0.082 | 0.467 |
+
+**T4 misses by 0.002.** That is the tightest call in the project and precisely the
+situation §5.6 exists for: one try out of 34 on a single dataset, at a raw p of 0.003 that
+looks compelling in isolation. The correction is applied and the default stands.
+
+Worth stating plainly because the number is tempting: **nothing here licenses switching to
+T4.** The delta is measured against a baseline whose own expectancy is not distinguishable
+from zero (D-027), so it is a difference between two things neither of which has been shown
+to work.
+
+### 2. D-017's prediction about the INERT rows is falsified
+
+`STATE.md` §9 item 8 said, in as many words:
+
+> *"Seven variants change nothing on this fixture and most of them are candidates to come
+> alive on real bars: the time stop, break-even and trailing all depend on trades lasting
+> longer than a random walk's do."*
+
+They did not.
+
+- **6 of 34 variants are still INERT** — they changed the outcome of zero setups — plus
+  **T3 still produces no trades at all**.
+- `exit.max_bars_in_trade` at **15, 30, 60 and off are still identical runs**. No trade in
+  the sample lives long enough for any horizon to bind, on real FX majors as on noise.
+- `manage.trail_mode = structure` is still INERT.
+
+The reasoning behind the prediction was sound and the conclusion was wrong: real markets do
+trend, but this strategy's trades do not last long enough for a time stop or a trail to
+reach them. That is a fact about the exit policy, not about the market.
+
+**The order-block definitions are still inert too** (B, C and D all identical to the
+default), and *that* prediction was right: D-017 §2 said they would stay inert at the
+shipped configuration because entry model C reads an FVG and stop S1 reads the sweep
+extreme, so nothing consumes an order block. Confirmed.
+
+### 3. The structural findings are unchanged, which is the point of separating them
+
+§6.5's three unimplemented components — session filter, killzone filter and
+`liq.tier_confirmation_tf` — are still unimplemented, so **D-002 still cannot be tested
+against its own named counterfactual**. That was true on the fixture and is true now,
+because it is a fact about the codebase rather than about the data. Splitting the matrix's
+output into *structural* / *arithmetic* / *measurement* (D-017) is what makes that legible
+across a change of dataset.
+
+### 4. The prose problem, priced
+
+This is the **sixth consecutive report** whose first real-data draft stated its own result
+backwards — here, *"every delta below is measured on a random walk, where the true effect
+of every component is zero by construction"*, printed above 34 real-data deltas.
+
+What makes this one different is the cost: the matrix takes **~50 minutes** to regenerate,
+so the usual "run it, read it, fix it, re-run" loop is expensive. The rule that follows is
+**sweep for `random walk`, `fixture` and `synthetic` *before* launching a long run, not
+after** — the sweep is free and the re-run is not. Six patches went in as one pass for that
+reason.
+
+Two further sources of delay in this run, recorded so the estimates improve:
+
+- The build was predicted at ~25 minutes and took **10,166s (2.8 hours)**, because the
+  serial-vs-parallel equivalence check was run concurrently on the same cores. The clean
+  re-run took ~50 minutes. **Do not run two build-heavy jobs at once** — they also both
+  write `reports/ablation.md`, which is a correctness hazard, not just a speed one.
+- The equivalence check itself had to be run from a copy of the script with its output
+  redirected, for exactly that reason.
+
+### 5. The parallelisation is verified
+
+`7ed2630` committed the parallel runner flagged as unverified, with the serial-vs-parallel
+numeric comparison explicitly deferred. **That check has now been run and passed**: one
+symbol, `--workers 1` against `--workers 2`, reports identical across all 34 variants but
+for the pytest timing string. The flag on that commit is discharged.
+
+### 6. What this does not establish
+
+**Anything out of sample.** In-sample only, on the four symbols that can be sized.
+
+**That an INERT row is a row that does not matter.** It is a row nothing in this data
+reached. §6.5's rule cannot tell those apart, which is why the matrix reports `INERT` and
+`NO_TRADES` as statuses outranking any verdict (D-017 §4).
+
+**That T4 is worse than the default**, or better. q = 0.102 is a miss, and a miss is not
+evidence for the null.

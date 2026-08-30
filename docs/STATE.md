@@ -465,9 +465,10 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-028 record corrections and findings from each phase's implementation.
+D-004 through D-029 record corrections and findings from each phase's implementation.
 **D-028 is the one that matters most**: it is the study §10.1 says decides the question,
-and it did not pass.
+and it did not pass. **Every study and phase gate in the project has now been run on
+real bars.**
 **D-020 is the one to read first**: it is the only entry written against real bars, and
 it is the one that turned Phase 9's PASS into a FAIL.
 
@@ -571,6 +572,9 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 90 | **H3 is falsified: a shuffled level book performs the same as the real one.** +0.003 gross, CI [−0.010, +0.017], inside the declared ±0.10 R. `EQUIVALENT` is evidence of absence at the project's own tradable-edge margin, not absence of evidence (D-028 §2). |
 | 91 | **The baseline does not separate from the random-time floor in gross R**, and `sweep_only` is *worse* than that floor. So the CHoCH step's measurable value is largely recovery from a bad entry rather than signal (D-028 §3). |
 | 92 | **Judging §10.1 in both currencies is what prevented a false pass.** The two arms that flip — `reversed_order`, `random_time` — have stops of 0.85 and 0.95 ATR against the baseline's 2.20. D-016 §1 predicted this on synthetic data; real bars confirm it, and the pre-registration had already closed the question (D-028 §4). |
+| 93 | **Every ablation default stands on real bars.** Three of 34 rows clear §6.5's raw rule and none survives Benjamini-Hochberg at q = 0.10 — `tp.model = T4` closest at **q = 0.102**, which is the tightest miss in the project and exactly what §5.6 exists for (D-029 §1). |
+| 94 | **The INERT rows did NOT come alive on real bars**, contrary to D-017's prediction that longer-lasting trades would make the time stop, break-even and trailing bite. `exit.max_bars_in_trade` at 15 / 30 / 60 / off remain byte-identical; 6 of 34 variants are still INERT plus T3 producing no trades (D-029 §2). |
+| 95 | **A protocol study's prose must be re-swept every time its data changes.** Six reports in a row shipped a first draft that stated its own result backwards, and the ablation matrix costs ~50 minutes per regeneration — so sweep for `random walk`, `fixture` and `synthetic` BEFORE the run, not after it (D-029 §4). |
 
 ---
 
@@ -832,10 +836,10 @@ arithmetic assumed.
    deciding row is **not met**: 3 of 5 in net R, 1 of 5 in gross. H3 falsified. The
    currency question was settled in advance by the pre-registration, which is the only
    reason the net column does not read as a pass. ~52 min at `--workers 5`.
-8. **`scripts/ablation_report.py`** — and read the INERT column first. Seven variants
-   change nothing on this fixture and most of them are candidates to come alive on real
-   bars: the time stop, break-even and trailing all depend on trades lasting longer than
-   a random walk's do.
+8. ~~**`scripts/ablation_report.py`**~~ — **DONE, 2026-08-31 (D-029).** Every default
+   stands; no row survives BH at q = 0.10, T4 closest at q = 0.102. **The prediction
+   in this line was wrong**: 6 of 34 are still INERT and the time stop, break-even and
+   trailing did *not* come alive on real bars. ~50 min at `--workers 5`.
 9. Re-measure the condition-bindingness ranking (D-008 §4, D-009 §7) before trusting the
    TUNABLE/ABLATION split.
 

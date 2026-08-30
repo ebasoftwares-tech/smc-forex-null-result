@@ -3006,3 +3006,116 @@ budget (protocol §7).
 
 **Anything about entry model C.** Selection is implemented and tested; what it is worth is
 Phase 12.
+---
+
+## D-024 — H5 on real bars: answered at the short horizons, out of reach at the long one
+
+| | |
+|---|---|
+| **Date** | 2026-08-30 |
+| **Decided by** | Elie (instruction: *"run marginal_value_report on the real data"*) |
+| **Status** | ACTIVE |
+| **Supersedes** | D-010 §4's three-ways-out framing, two of which have now resolved |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample, H4, `reference_mode = major` |
+| **Report** | `reports/marginal_value.md` — 8/8 checks PASS, pooled verdict UNDERPOWERED |
+
+### 1. Two of three horizons resolved, and both say no
+
+| h | n MSS | n not-MSS | diff (ATR) | 95% CI | MDE | Verdict |
+|---:|---:|---:|---:|---|---:|---|
+| 1 | 326 | 3,529 | −0.026 | [−0.117, +0.064] | 0.134 | **EQUIVALENT** |
+| 4 | 326 | 3,526 | +0.017 | [−0.134, +0.168] | 0.232 | **EQUIVALENT** |
+| 12 | 325 | 3,524 | −0.142 | [−0.417, +0.143] | 0.428 | UNDERPOWERED |
+
+**The pooled verdict is UNDERPOWERED and it hides a real answer.** It takes the weakest
+horizon, which is the correct behaviour — averaging a resolved result together with an
+unresolved one is exactly what the three-way verdict exists to prevent — but the headline
+should not be read as "H5 remains open" without qualification. At h=1 and h=4 the sample
+resolves the pre-declared ±0.25 ATR margin and reports EQUIVALENT.
+
+So: **displacement filtering does not separate MSS from CHoCH-not-MSS forward returns by as
+much as 0.25 ATR over 1 to 4 H4 bars, on real market data.** H5 is falsified at those
+horizons. Together with D-023's FVG null, two of the project's component hypotheses now have
+real-data answers, and both are negative.
+
+`UNDERPOWERED` at h=12 is **not** a null. It says the study could not look, and the power
+table says why.
+
+### 2. The power arithmetic squeezed from both ends
+
+`STATE.md` §3a carried the synthetic projection as *"a planning fact that transfers to real
+data"*. It transferred in shape and got worse in both terms:
+
+| h | MSS needed (synth → real) | universe (427 → **326**) | dev set (128 → **88**) |
+|---:|---|---|---|
+| 1 | 58 → **93** | yes | **no** |
+| 4 | 222 → **281** | yes | **no** |
+| 12 | 804 → **951** | **no** | **no** |
+
+Requirements rose by 15-60% because real forward-return variance is larger than a random
+walk's, and the population fell because D-020's measured funnel produces fewer MSS than the
+fixture projected. The prediction that h=12 would be out of reach was right, and by a wider
+margin than expected: 326 against 951.
+
+**The counting basis is worth restating**, since it explains why 368 (D-020) and 326 (here)
+differ. Phase 9 deduplicates per SPEC 9.4 *cluster*; this study collapses to one observation
+per `(break bar, direction)`, because a forward return is a function of exactly those two
+things. The stricter rule is the right one for a return study and gives 8.2 MSS per
+symbol-year against the funnel's 9.2.
+
+### 3. The development set answers nothing, for the third study running
+
+**88 MSS on EURUSD/GBPUSD/USDJPY, against the 93 that the *shortest* horizon needs.** So H5
+is unanswerable on the development set at every horizon, while the universe answers two of
+three.
+
+That is now a pattern rather than an observation:
+
+| Study | Pooled | Development set |
+|---|---|---|
+| Phase 9 gate (D-020) | 368 ≥ 300, passes | 97 < 120, **fails** |
+| OB touches (D-022) | 492, h=1 and h=3 answerable | 135 < 155, **no horizon** |
+| H5 (this) | 326, h=1 and h=4 answerable | 88 < 93, **no horizon** |
+
+Three independent studies, one shape. **The design iterates on three symbols and none of its
+questions can be answered on three symbols.** That is not a finding about any one study; it
+is a finding about the development-set size, and it is the same underlying scarcity D-020
+measured. Nothing here decides what to do about it — the options are still D-020 §8's — but
+after three instances the cost of leaving it undecided is clearer.
+
+### 4. Widening the margin is now closed, permanently
+
+The synthetic run listed three ways out and said they were *"better decided now than after
+Phase 14"*. Two have resolved themselves and one is closed:
+
+1. **Answer H5 at the short horizons only** — this is what happened, without anyone choosing
+   it. h=1 and h=4 resolve; the narrower claim is a real one.
+2. **Widen the margin to 0.5 ATR** — **closed.** It divides every requirement by four and
+   would make h=12 answerable. It was declared defensible *before* the data and an
+   indefensible reaction after it, and the data has been seen. §10.2 binds. Recorded as
+   closed rather than left on a list where someone could pick it up later.
+3. **The §6.5 ablation delta** remains the route to h=12's question, measuring the same
+   component through the full system rather than through forward returns.
+
+### 5. Controls, and the overlap diagnostic
+
+Both controls pass and are worth quoting because the verdict depends on them: null
+calibration **5.2%** over 3,000 label shuffles with a Wilson interval of [4.5%, 6.1%]
+containing α — calibrated, the same result D-022 §4 and D-023 got once samples grew — and
+the positive control detects an injected +0.8 ATR.
+
+**31.9% of events have a contaminated 12-bar window.** The non-overlapping subsample is
+reported alongside for that reason and reaches the same verdicts, so overlap is not what is
+holding h=12 back; sample size is.
+
+### 6. Applying D-023 §5's own rule caught six more passages
+
+D-023 §5 recorded the rule *"grep every generated report for `random walk` and `fixture`
+after pointing a script at real data"*. Applied here immediately, it found six surviving
+passages — including the power section describing itself as *"the one output that does not
+depend on the data being synthetic"* — plus a table headed **"Per-year stability"** whose
+rows were symbols, with the prose beneath it reading *"the sign flips between years"*.
+
+The rule earned its keep on the first script it was applied to. This one had the most
+fixture-shaped prose in the project, because its entire framing was "instrument validated,
+H5 open pending real data" — a sentence that becomes false the moment the data arrives.

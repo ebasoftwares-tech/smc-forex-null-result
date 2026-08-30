@@ -128,26 +128,42 @@ options and deliberately takes none of them.
 
 ---
 
-## 3a. The H5 study, and the number that outlives it
+## 3a. The H5 study, answered at the short horizons and out of reach at the long one
 
-`reports/marginal_value.md`. **H5 — "displacement filtering adds value" — is open**, and
-on a random walk it can only be: the true MSS vs CHoCH-not-MSS difference is zero by
-construction, so a `DIFFERENT` verdict here would mean the study is broken.
+`reports/marginal_value.md`, **run on real bars 2026-08-30 (D-024)**. H5 — "displacement
+filtering adds value" — is **answered in the negative at h=1 and h=4, and unanswerable at
+h=12**:
 
-What the run does establish is a planning fact that transfers to real data, because it is
-a property of the return distribution and the funnel's output rate rather than of the
-fixture's realism:
+| h | n MSS | diff (ATR) | 95% CI | MDE | Verdict |
+|---:|---:|---:|---|---:|---|
+| +1 | 326 | −0.026 | [−0.117, +0.064] | 0.134 | **EQUIVALENT** |
+| +4 | 326 | +0.017 | [−0.134, +0.168] | 0.232 | **EQUIVALENT** |
+| +12 | 325 | −0.142 | [−0.417, +0.143] | 0.428 | UNDERPOWERED |
 
-| Horizon | MSS needed to resolve +/-0.25 ATR | Dev set projects 128 | Universe projects 427 |
-|---:|---:|:--:|:--:|
-| +1 | 58 | yes | yes |
-| +4 | 222 | **no** | yes |
-| +12 | 804 | **no** | **no** |
+The pooled verdict is the weakest horizon's — **UNDERPOWERED** — and that is correct
+rather than pessimistic: averaging a resolved answer together with an unresolved one is
+the thing the three-way verdict exists to prevent. But two of three horizons *did*
+resolve, and at those **MSS and CHoCH-not-MSS forward returns differ by less than 0.25
+ATR**. That is H5 falsified at short horizons, on real market data.
 
-**At the 12-bar horizon the full in-sample universe is not enough**, whatever the backtest
-shows. Decide which way out to take *now* rather than after Phase 14 — answer H5 at the
-short horizons only, widen the margin (a defensible decision in advance and an
-indefensible reaction later), or leave H5 to §6.5's ablation delta. See D-010 §4.
+**The power arithmetic squeezed from both ends.** The synthetic projection is on the left:
+
+| h | needed (synth → real) | universe (427 → **326**) | dev set (128 → **88**) |
+|---:|---|---|---|
+| +1 | 58 → **93** | yes | **no** |
+| +4 | 222 → **281** | yes | **no** |
+| +12 | 804 → **951** | **no** | **no** |
+
+Requirements rose and the population fell. **The development set cannot answer H5 at any
+horizon** — 88 MSS against the 93 that h=1 alone needs. That is the third consecutive
+study in which the pooled number resolves and the three symbols development iterates on do
+not (D-020's gate, D-022's OB touches, this).
+
+**Widening the margin is now closed.** The synthetic run listed 0.5 ATR as a live option
+and said in advance that it was defensible before the data and an indefensible reaction
+after it. The data has been seen; §10.2 binds. What remains for h=12 is §6.5's ablation
+delta, which measures the same component through the full system rather than through
+forward returns.
 
 Two things about the study itself that are easy to undo:
 
@@ -420,7 +436,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-023 record corrections and findings from each phase's implementation.
+D-004 through D-024 record corrections and findings from each phase's implementation.
 **D-020 is the one to read first**: it is the only entry written against real bars, and
 it is the one that turned Phase 9's PASS into a FAIL.
 
@@ -507,6 +523,9 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 73 | **There is no standalone FVG edge, measured on real bars** — EQUIVALENT at h=1, 3, 6 and 12 over 7,800 touches, every interval inside the declared +/-0.25 ATR. This is the project's **first null that is about the market rather than the fixture**. It does *not* say `disp.require_fvg` or entry model C are worthless: those use a gap as displacement evidence and as a price to bid at, neither of which is what was tested (D-023). |
 | 74 | **A report whose prose was written for the fixture will state a real-data result backwards.** Phase 10's first real run printed "on a random walk the true effect is zero by construction" underneath a genuine market null, and printed "INVALIDATED is zero on this fixture" directly under a paragraph reporting 19 of them. Grep every generated report for `random walk` and `fixture` after pointing a script at real data (D-023 §5). |
 | 75 | **Components of this strategy are not equally measurable, and the two the design rests on are the hardest.** Over the same in-sample split: 7,800 FVG touches, 492 OB touches, 368 MSS events. The FVG concept gets ~21x the sample the MSS chain does, so a confident null about FVGs and an underpowered shrug about MSS are what the data supports, not a statement about which component matters (D-023 §3). |
+| 76 | **H5 is answered at h=1 and h=4 and unanswerable at h=12** — EQUIVALENT on both short horizons over 326 MSS events, so displacement filtering does not separate MSS from CHoCH-not-MSS forward returns by as much as 0.25 ATR. The pooled verdict reads UNDERPOWERED because it takes the weakest horizon, which is correct and hides the answer; read the per-horizon table (D-024). |
+| 77 | **Widening H5's 0.25 ATR margin is closed, permanently.** It was listed as a live option *before* the data with the note that it would be an indefensible reaction afterwards. The data has been seen. Anyone reaching for 0.5 ATR to make h=12 answerable is doing the thing §10.2 prohibits (D-024 §4). |
+| 78 | **Three studies now say the same thing about the development set: it answers nothing.** Phase 9's gate failed on it (97 MSS vs 120), the OB study cannot resolve any horizon on it (135 touches vs 155), and H5 cannot either (88 MSS vs 93). Every one of those pooled counterparts passes. Iterating on three symbols is the design decision this keeps colliding with (D-020, D-022 §3, D-024 §3). |
 
 ---
 
@@ -602,9 +621,10 @@ caught it. Four mutations were run against the new suite and all four are now ca
 ## 8. The honest limitation
 
 **Most numbers in this file still come from a synthetic random walk.** Real bars landed
-on 2026-08-30; **Phase 9** (§3, D-020), **Phase 10** (D-023) and **Phase 11** (D-022)
-have been re-run on them, and every other report below is still the fixture until it is
-re-run too. The fixture has no liquidity, no participants and no structure, so:
+on 2026-08-30; **Phase 9** (§3, D-020), **Phase 10** (D-023), **Phase 11** (D-022) and
+**the H5 study** (§3a, D-024) have been re-run on them, and every other report below is
+still the fixture until it is re-run too. The fixture has no liquidity, no participants
+and no structure, so:
 
 - Sweep counts, rates, distributions, rejection rates and now the MSS funnel are
   properties of *the detectors meeting noise*. They prove the engines are deterministic,
@@ -617,9 +637,10 @@ re-run too. The fixture has no liquidity, no participants and no structure, so:
   57% — the size of error to expect from the rest. What survives unchanged is the
   correlation caveat: the ten majors are heavily correlated, so the effective sample is
   smaller than the count, and the gate is stated in counts.
-- **The H5 study validates its own instrument and nothing else.** A `DIFFERENT` verdict
-  on this fixture would mean it is broken. Its power arithmetic is the one output that
-  transfers (§3a).
+- **H5 has left this list too.** Run on real bars it answers its own question at h=1
+  and h=4 (EQUIVALENT, no difference) and cannot at h=12 (§3a, D-024). Its power
+  arithmetic — the output the fixture run said would transfer — did transfer, in the
+  sense that its *shape* held while both its terms moved against us.
 - **Phase 10 has left this list, and it is the one that produced an answer.** Both of
   its predictions were checked on real bars (D-023): it *was* answerable at every
   horizon — 7,800 touches, all four intervals inside the margin, verdict **EQUIVALENT**
@@ -740,11 +761,10 @@ arithmetic assumed.
 2. ~~**`scripts/phase11_report.py`**~~ — **DONE, 2026-08-30 (D-022).** `M_eff` = **1.68**
    on real bars against the fixture's 1.77 — it transferred, which almost nothing else
    here has. Use 1.68 in every correction. Takes ~9 minutes.
-3. ~~**`scripts/phase10_report.py`**~~ — **DONE, 2026-08-30 (D-023).** EQUIVALENT at
-   every horizon on 7,800 touches: no standalone FVG edge. **`scripts/marginal_value_report.py`**
-   (H5) is still to run, and D-020's 368 MSS is the population it has to work with —
-   §3a's arithmetic said 804 were needed at h=12, so expect UNDERPOWERED there and
-   decide in advance which horizons it is allowed to answer.
+3. ~~**`scripts/phase10_report.py`** and **`scripts/marginal_value_report.py`**~~ —
+   **BOTH DONE, 2026-08-30 (D-023, D-024).** No standalone FVG edge (EQUIVALENT at
+   every horizon, 7,800 touches); H5 EQUIVALENT at h=1 and h=4, UNDERPOWERED at h=12.
+   Two of the project's component hypotheses now have real-data answers.
 4. **`scripts/phase12_report.py`** — the two things the continuous fixture cannot show:
    SPEC 15.3's lookahead (worth 10–30% of headline return per the spec, and exactly
    0.0000 ATR here) and the gap-past-the-stop branch. Both are pure gap effects. The S4

@@ -251,10 +251,39 @@ later, with each branch clamping internally *and* a final clamp that no input co
 Fixed by restructuring so the branches propose and one clamp decides. 17 mutations were run;
 6 survived the first pass, all 17 are caught now.
 
-## 3d. The falsification suite, and the criterion it broke
+## 3d. The falsification suite — §10.1's deciding row, and it is not met
 
-`reports/falsification.md`. §10.1 has eleven go/no-go rows and says which one decides the
-question:
+`reports/falsification.md`, **run on real bars 2026-08-30 (D-028)**. §10.1 requires the
+full model to beat **every** §6.3/§6.4 control, in **both** gross and net R, each by a CI
+excluding zero. It beats **3 of 5 in net R and 1 of 5 in gross**:
+
+| Arm | tests | gross E/setup | net Δ vs base | gross verdict | median SL (ATR) |
+|---|---|---:|---:|---|---:|
+| `baseline` | — | +0.003 | — | — | 2.20 |
+| `shuffled_liquidity` | H3 | −0.000 | +0.004 | `EQUIVALENT` | 2.12 |
+| `sweep_only` | H4 | −0.021 | +0.064 | **DIFFERENT** | 0.88 |
+| `choch_only` | H4 | +0.019 | −0.013 | `EQUIVALENT` | 2.14 |
+| `reversed_order` | H4 | −0.021 | +0.063 | `EQUIVALENT` | 0.85 |
+| `random_time` | floor | −0.010 | +0.047 | `EQUIVALENT` | 0.95 |
+
+**H3 is falsified.** A randomly-placed level book performs the same: +0.003 gross, CI
+[−0.010, +0.017], inside the declared ±0.10 R margin. `EQUIVALENT` is the verdict that
+licenses "contributes nothing" — not absence of evidence, but evidence of absence at the
+margin the project itself declared tradable.
+
+**The only component that survives is the CHoCH step**, and it survives in a weaker sense
+than it looks: `sweep_only` is beaten in both currencies, but at −0.021 gross it is *worse
+than the random-time floor* (−0.010), and the baseline (+0.003) is `EQUIVALENT` to that
+floor. **Waiting for the CHoCH mostly recovers from a bad entry rather than finding
+signal.**
+
+**D-016 §1 is confirmed on real bars.** The two arms that flip between currencies —
+`reversed_order` and `random_time` — are exactly the two with much tighter stops (0.85 and
+0.95 ATR against 2.20). A fixed spread costs more per R against a tighter stop. The
+pre-registration fixed "judge in both" *before* any of this ran, and that is what stops
+the net column reading as three wins.
+
+The original §10.1 text, for the record:
 
 > *"The last falsification row is the one that matters most and is the one most likely to
 > fail. A strategy that beats a null model but not a sweep-only control has not
@@ -436,7 +465,9 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-027 record corrections and findings from each phase's implementation.
+D-004 through D-028 record corrections and findings from each phase's implementation.
+**D-028 is the one that matters most**: it is the study §10.1 says decides the question,
+and it did not pass.
 **D-020 is the one to read first**: it is the only entry written against real bars, and
 it is the one that turned Phase 9's PASS into a FAIL.
 
@@ -536,6 +567,10 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 86 | **The whole in-sample book is 102 trades on four symbols**, against protocol 5.1's floor of 200 for a headline claim. The shortfall is **structural, not a matter of more history**: six symbols cannot be sized for want of an FX rate (D-026), so reaching 200 in-sample needs a conversion series rather than more years (D-027 §2). |
 | 87 | **In-sample expectancy is −0.19 R with a CI spanning zero** ([−0.38, +0.02] block bootstrap, 102 trades). Negative point estimate, interval reaching positive, sample too small to separate them — neither evidence of edge nor evidence against, and **not** a result to quote either way (D-027 §1). |
 | 88 | **Phase 14 must build one market at a time.** It runs ~19 variants over each, so the original built all markets first; ten symbols × four years of M1 is 1.04 GB measured. `run` costs ~0.0s against `build_market`'s ~44s, so inverting the loops is free (D-027 §4). |
+| 89 | **§10.1's deciding row is NOT met on real bars** — the baseline beats 3 of 5 controls in net R and 1 of 5 in gross, against a requirement of 5 of 5 in both. Only `sweep_only` is beaten in both currencies (D-028 §1). |
+| 90 | **H3 is falsified: a shuffled level book performs the same as the real one.** +0.003 gross, CI [−0.010, +0.017], inside the declared ±0.10 R. `EQUIVALENT` is evidence of absence at the project's own tradable-edge margin, not absence of evidence (D-028 §2). |
+| 91 | **The baseline does not separate from the random-time floor in gross R**, and `sweep_only` is *worse* than that floor. So the CHoCH step's measurable value is largely recovery from a bad entry rather than signal (D-028 §3). |
+| 92 | **Judging §10.1 in both currencies is what prevented a false pass.** The two arms that flip — `reversed_order`, `random_time` — have stops of 0.85 and 0.95 ATR against the baseline's 2.20. D-016 §1 predicted this on synthetic data; real bars confirm it, and the pre-registration had already closed the question (D-028 §4). |
 
 ---
 
@@ -793,10 +828,10 @@ arithmetic assumed.
    three effects this fixture measures as exactly zero: SPEC 15.3's lookahead, the S4
    stop's movement at fill, and SPEC 17.5's intrabar ambiguity. Also the rejection table,
    which is the only place a filter can be shown to be destroying edge.
-7. **`scripts/falsification_report.py`** — the §6.3/6.4 suite, which is the one that
-   decides whether the project has demonstrated what it claims. Everything before it can
-   pass while this fails. **Read the gross-R table before the net-R one** (D-016 §1), and
-   settle which of the two §10.1 is to be judged in *before* running it, not after.
+7. ~~**`scripts/falsification_report.py`**~~ — **DONE, 2026-08-30 (D-028).** §10.1's
+   deciding row is **not met**: 3 of 5 in net R, 1 of 5 in gross. H3 falsified. The
+   currency question was settled in advance by the pre-registration, which is the only
+   reason the net column does not read as a pass. ~52 min at `--workers 5`.
 8. **`scripts/ablation_report.py`** — and read the INERT column first. Seven variants
    change nothing on this fixture and most of them are candidates to come alive on real
    bars: the time stop, break-even and trailing all depend on trades lasting longer than

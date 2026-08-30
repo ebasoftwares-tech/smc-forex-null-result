@@ -3440,3 +3440,122 @@ verdicts carry no information the headline interval did not already give.
 
 **That 102 trades support any per-model, per-session or per-symbol breakdown.** Every such cell
 in the report is smaller still, and the report marks the 30-99 band as suggestive only.
+---
+
+## D-028 — The falsification suite on real bars: §10.1's deciding row is not met
+
+| | |
+|---|---|
+| **Date** | 2026-08-30 |
+| **Decided by** | Elie (instruction: *"run the falsification suite on the real data"*) |
+| **Status** | ACTIVE |
+| **Answers** | H3 (falsified), H4 (partially) |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample, 64,228 H4 bars, entry model A |
+| **Report** | `reports/falsification.md` |
+
+`BACKTEST_PROTOCOL.md` §10.1 names this row as the one that decides the question, and says
+in advance it is the one most likely to fail:
+
+> *"A strategy that beats a null model but not a sweep-only control has not demonstrated
+> the thing it claims to demonstrate."*
+
+### 1. The row is not met
+
+The requirement is **every** control, in **both** currencies, each by a CI excluding zero.
+
+| Arm | tests | gross E/setup | net Δ | gross verdict | net verdict | median SL |
+|---|---|---:|---:|---|---|---:|
+| `baseline` | — | +0.003 | — | — | — | 2.20 |
+| `shuffled_liquidity` | H3 | −0.000 | +0.004 | `EQUIVALENT` | `EQUIVALENT` | 2.12 |
+| `sweep_only` | H4 | −0.021 | +0.064 | **DIFFERENT** | **DIFFERENT** | 0.88 |
+| `choch_only` | H4 | +0.019 | −0.013 | `EQUIVALENT` | `EQUIVALENT` | 2.14 |
+| `reversed_order` | H4 | −0.021 | +0.063 | `EQUIVALENT` | **DIFFERENT** | 0.85 |
+| `random_time` | floor | −0.010 | +0.047 | `EQUIVALENT` | **DIFFERENT** | 0.95 |
+
+**3 of 5 in net R, 1 of 5 in gross.** Only `sweep_only` clears in both.
+
+### 2. H3 is falsified
+
+A **randomly placed level book performs the same as the real one**: +0.003 R per setup
+gross, CI [−0.010, +0.017] — sitting entirely inside the ±0.10 R margin declared before any
+arm ran.
+
+`EQUIVALENT` is the verdict the three-way scheme exists to distinguish from `UNDERPOWERED`,
+and it is the only one that licenses the word "no". This is **evidence of absence at the
+project's own threshold for a tradable edge**, not absence of evidence. The arm had 43,965
+setups against the baseline's 1,616, so power is not the limitation.
+
+§6.3 states the consequence it invites: *"rebuilt as a mean-reversion model and the SMC
+framing dropped"*. **This entry does not draw that conclusion** — see §5 — but it is the
+first time in the project that the data, rather than the fixture, has put it on the table.
+
+### 3. The one surviving component survives weakly
+
+`sweep_only` is beaten in both currencies, which is a real result: **waiting for the CHoCH
+after a sweep is better than entering at the sweep.** Read against the floor, though:
+
+| | gross E/setup |
+|---|---:|
+| `sweep_only` (enter at the sweep) | **−0.021** |
+| `random_time` (matched random entry) | −0.010 |
+| `baseline` (the full sequence) | +0.003 |
+
+Entering at the sweep is **worse than entering at random**, and the baseline is
+`EQUIVALENT` to random. So the CHoCH step's measurable contribution is mostly **recovery
+from a bad entry rather than the discovery of signal** — it stops the strategy doing
+something actively harmful and returns it to the floor.
+
+`choch_only` says the mirror image: dropping the sweep requirement entirely costs nothing
+measurable (−0.013, `EQUIVALENT`), and its gross expectancy (+0.019) is nominally the
+highest of any arm.
+
+### 4. Judging in both currencies is what prevented a false pass
+
+`reversed_order` and `random_time` are `DIFFERENT` in net R and `EQUIVALENT` in gross. Their
+median stops are **0.85 and 0.95 ATR against the baseline's 2.20**: a fixed spread costs
+roughly twice as much per R against a stop half as wide, so an arm that enters earlier is
+cost-inflated by geometry rather than beaten on signal.
+
+D-016 §1 found this on synthetic data and could not tell whether it would matter on real
+bars. It does: **two of the three net-R "wins" are geometry.** The pre-registration closed
+the question in advance by requiring both currencies (§3, closing D-016 §1), which is the
+only reason this reads as 1 of 5 rather than 3 of 5. **A criterion settled before the run is
+what makes the difference between a null result and a false positive here** — precisely what
+§10.2 exists to protect.
+
+### 5. What this does NOT decide
+
+**It is in-sample.** 2023-2024 and 2025 were not read. A result this consequential should be
+confirmed out of sample before it is acted on, and doing that spends §7 budget — a decision
+to take deliberately, not as a reflex.
+
+**The baseline's own expectancy is not distinguishable from zero** (D-027: −0.19 R over 102
+trades, CI spanning zero). Every delta here is between two arms neither of which has
+demonstrated an edge, so "the baseline beats X" means "is less bad than X".
+
+**H4 is not settled as a whole.** Its three arms disagree: the CHoCH requirement contributes
+(`sweep_only` beaten), the sweep requirement does not (`choch_only` equivalent), and the
+ordering does not (`reversed_order` equivalent in gross). "The sequence matters" is too
+coarse a hypothesis for what the data says.
+
+**No redesign is decided here.** §6.3's invitation to drop the SMC framing is now supported
+by an `EQUIVALENT` verdict on H3 rather than by a fixture-guaranteed null, which is a
+genuine change in status — but acting on it is a design decision, and the honest next step
+is the out-of-sample confirmation above rather than a rebuild.
+
+### 6. One residual, unverified
+
+The "three guards nothing reaches" table still asserts that
+`choch.max_reference_distance_atr` *"rejects nothing — the widest reference sits at about
+2.8 ATR"*. That is a fixture measurement carried into a real-bars report, and it may be
+false: D-020 found this same parameter binding differently on real data. Re-checking it
+costs another ~52-minute run and was not done. **Treat that one cell as unverified.**
+
+### 7. Runtime
+
+~52 minutes at `--workers 5`, against ~2.4 hours serial: §6.3's shuffled arm calls the full
+`build_market` once per seed (20 seeds × 10 symbols = 200 builds at ~44s). Every
+(symbol, seed) build is independent, seeded and deterministic, so distributing them changes
+the wall clock and nothing else — verified before use against a serial run on one symbol ×
+2 seeds (identical but for a pytest timing string) and two symbols × 1 seed
+(byte-identical). `--workers 1` forces the serial path.

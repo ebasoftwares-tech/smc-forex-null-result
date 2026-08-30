@@ -62,7 +62,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 | 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 **on real bars** — **EQUIVALENT: no standalone FVG edge**, the project's first meaningful null, see D-023 |
 | 11 | Order Block bake-off — four definitions, agreement matrix | `reports/phase11_gate.md` | 10/10 **on real bars** — four variants are worth **1.68 tests**, see D-022 |
 | 12 | Entry engine — five models, fill resolution against M1 | `reports/phase12_gate.md` | 8/8 **on real bars, real M1** — the lookahead has a magnitude and two predictions failed, see D-025 |
-| 13 | Risk — stops S1–S4, the RR gate, sizing, limits | `reports/phase13_gate.md` | 8/8 — **four defaults that cannot fire**, see D-014 |
+| 13 | Risk — stops S1–S4, the RR gate, sizing, limits | `reports/phase13_gate.md` | 8/8 **on real bars** — **6 of 10 symbols cannot be sized at all** (no FX rate), see D-026 |
 | 14 | Backtest engine — exits, costs, metrics, Monte Carlo | `reports/phase14_gate.md` | 10/10 — **four free lunches found and closed**, see D-015 |
 | — | **The falsification suite**: shuffled liquidity, sweep-only, CHoCH-only, reversed-order, random-time (protocol 6.3/6.4) | `reports/falsification.md` | Built and validated — **and section 10.1's own acceptance row turns out to be satisfiable by stop width**, see D-016 |
 | — | **The ablation matrix** (protocol 6.5) | `reports/ablation.md` | 34 variants over 19 components — **5 of the 19 cannot be toggled at all**, and 7 variants change nothing, see D-017 |
@@ -436,7 +436,7 @@ Full reasoning in `DECISIONS.md`. The two that shape everything:
   the window permits two days, but the measured median is 8 hours — the model is
   multi-session by permission and same-day in practice, at least against noise.*
 
-D-004 through D-025 record corrections and findings from each phase's implementation.
+D-004 through D-026 record corrections and findings from each phase's implementation.
 **D-020 is the one to read first**: it is the only entry written against real bars, and
 it is the one that turned Phase 9's PASS into a FAIL.
 
@@ -529,6 +529,10 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 79 | **`cancel_if` clause 2 is NOT a fixture artefact, and it decides the entry bake-off by itself.** The synthetic report predicted the sweep rate behind it was one *"no real market sustains"*; real bars give **0.44 confirmed sweeps per H4 bar against 0.47** on the fixture. Limit fill rates run 6-10% with the clause against 30-46% without it. A FROZEN clause discarding ~90% of every limit model's population is not a background condition (D-025 §3). |
 | 80 | **SPEC 15.3's lookahead is worth 0.0156 ATR per entry on real bars**, from 43,360 non-zero close-to-open gaps in 64,228 transitions. Small against the spec's *"10-30% of headline return"* but taken on **every** trade, and exactly 0.0000 on the fixture. The rule is now demonstrable, not just load-bearing (D-025 §2). |
 | 81 | **The gap-past-the-stop branch stays unexercised even on real data** — 0 firings over 40 symbol-years. Real H4 gaps are ~0.005 ATR median against a stop 1-2 ATR away. Unlike Phase 10's `INVALIDATED`, moving to real data did **not** bring this guard alive, and that is not grounds to remove it: the gap that clears a stop is precisely the tail event it exists for (D-025 §4). |
+| 82 | **Only 4 of the 10 symbols can be sized at all, and it is not the account size.** Every symbol whose QUOTE currency is not the account currency is blocked by SPEC 18.2's missing-FX-rate rule (Q1 open): USDJPY, EURJPY, GBPJPY, USDCAD, USDCHF, EURGBP. The pre-registration's cross-sectional criterion (≥ 6 of 10 symbols) is **unevaluable** until a rate series exists (D-026 §1). |
+| 83 | **`trade.evaluate` reports a missing FX rate as `SIZE_BELOW_MIN`**, so the rejection log names lot granularity for a failure that is nothing of the kind — and it produced exactly the wrong diagnosis ("the account is too small") before the sizing call was run directly. D-019 §1 recurring. SPEC 19 has no code for it, so adding one is a specification change (D-026 §2). |
+| 84 | **S4's 40-pip ceiling does bind on real bars** — 12% of setups overall, 47% of GBPUSD's, 1% of EURGBP's, and the ceiling is **60 pips for JPY pairs** because `max_sl_pips` is {default: 60, JPY: 90}. S4 is a partially available model whose availability depends on the symbol; D-014 §3's open question, answered (D-026 §3). |
+| 85 | **An account sweep must not be fed the setups that already sized.** Its denominator would be fixed by the one number it varies. Feed it every setup whose stop cleared the SPEC 16.3 caps (D-026 §4). |
 
 ---
 
@@ -624,11 +628,11 @@ caught it. Four mutations were run against the new suite and all four are now ca
 ## 8. The honest limitation
 
 **Some numbers in this file still come from a synthetic random walk.** Real bars landed
-on 2026-08-30; **Phase 9** (§3, D-020), **Phase 10** (D-023), **Phase 11** (D-022),
-**Phase 12** (D-025) and **the H5 study** (§3a, D-024) have been re-run on them. What is
-left on the fixture is **Phase 13, Phase 14, the falsification suite and the ablation
-matrix** — the four that produce performance numbers. The fixture has no liquidity, no
-participants and no structure, so:
+on 2026-08-30; **Phases 9-13** (§3 D-020, D-023, D-022, D-025, D-026) and **the H5
+study** (§3a, D-024) have been re-run on them. What is left on the fixture is **Phase
+14, the falsification suite and the ablation matrix** — the three that produce
+performance numbers. The fixture has no liquidity, no participants and no structure,
+so:
 
 - Sweep counts, rates, distributions, rejection rates and now the MSS funnel are
   properties of *the detectors meeting noise*. They prove the engines are deterministic,
@@ -775,7 +779,11 @@ arithmetic assumed.
    gap-past-the-stop branch **still fires zero times** — real H4 gaps are ~0.005 ATR
    against a 1-2 ATR stop — so that prediction failed. So did the claim that the
    opposing-sweep cancel was a fixture artefact.
-5. **`scripts/phase13_report.py`** — recompute `M_eff` for the stop models, and settle the
+5. ~~**`scripts/phase13_report.py`**~~ — **DONE, 2026-08-30 (D-026).** `M_eff` = 1.32
+   (was 1.36). S4's ceiling **does** bind, on 12% of setups and 47% of GBPUSD's. The
+   minimum viable account is still USD 2,000. And **6 of 10 symbols cannot be sized at
+   all** for want of an FX rate. Superseded text below, kept for the questions it named:
+5. ~~**`scripts/phase13_report.py`** — recompute `M_eff` for the stop models, and settle the
    three questions the fixture's 17.4-pip ATR cannot: whether real ATR clears S4's 40-pip
    ceiling, which of the two upper stop caps actually binds, and what the minimum viable
    account really is at the real stop-distance scale.

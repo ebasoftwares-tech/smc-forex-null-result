@@ -3224,3 +3224,133 @@ true intrabar path**: it is a sampling of the tape, within-minute order is unkno
 spread series exists yet at all. **That the fill rates generalise beyond these four
 in-sample years** — and their close agreement with the fixture deserves more scepticism than
 a confirmed prediction would, given two other predictions in the same report failed.
+---
+
+## D-026 — Phase 13 on real bars: six symbols cannot be sized, and the log blamed the wrong thing
+
+| | |
+|---|---|
+| **Date** | 2026-08-30 |
+| **Decided by** | Elie (instruction: *"run phase13_report on the real data"*) |
+| **Status** | ACTIVE |
+| **Answers** | D-014 §3 (does S4's ceiling bind?), and `STATE.md` §9's three open Phase 13 questions |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample, H4 |
+| **Report** | `reports/phase13_gate.md` — 8/8 checks PASS |
+
+### 1. Only four of the ten symbols can carry a sized trade
+
+| | |
+|---|---|
+| Sizeable | AUDUSD, EURUSD, GBPUSD, NZDUSD |
+| **Blocked** | USDJPY, EURJPY, GBPJPY, USDCAD, USDCHF, EURGBP |
+
+**Every blocked symbol is one whose quote currency is not the account currency.** Sizing
+converts a stop distance into money at the quote→USD rate; SPEC 18.2 says the absence of
+that series *"blocks the inclusion of any symbol"* rather than defaulting to 1.0; and there
+is no series, because **Q1 is still open**. The four that size are the USD-quoted pairs,
+where the rate is 1 by identity.
+
+This is the rule working exactly as written. It is not a defect, and it is not a function of
+`account.starting_equity` — the blocked symbols fail at every equity.
+
+**What it costs is larger than this phase.** The pre-registration's cross-sectional
+criterion — *"≥ 6 of 10 symbols with positive expectancy, same parameters"* (§3) — is
+**unevaluable**, because six of the ten cannot produce a sized trade at all. That criterion
+is one of §10.1's go/no-go rows. Q1 was previously understood to block the live-matching set
+and the swap table (`STATE.md` §9); it also blocks a headline acceptance criterion, and that
+was not known before this run.
+
+### 2. The rejection log named the wrong cause, and it fooled me first
+
+`trade.evaluate` catches `MissingConversionRate` and returns
+`RiskReject.SIZE_BELOW_MIN`:
+
+```python
+except MissingConversionRate as exc:
+    return Decision(Stage.SIZING, RiskReject.SIZE_BELOW_MIN.value, None, at, str(exc))
+```
+
+So all six blocked symbols report a **lot-granularity** failure they never had. Reading that
+table gives the wrong diagnosis — *"USD 35 of risk cannot buy a 0.01 lot, the account is too
+small"* — and therefore the wrong fix, which is to raise `starting_equity`. That fix would
+change nothing.
+
+**That is precisely the diagnosis I reached and reported before checking**, and it survived
+until `account_sweep` — which calls `size_for_setup` directly and does not relabel — raised
+the exception in the open. **D-019 §1 recurring, in the same codebase, four decisions
+later**: *a rejection reason names the gate that refused, not the reason it refused.* The
+one-line check there was "set the parameter to 0 and see if anything changes"; the one-line
+check here is "call the sizing function directly and read the exception".
+
+**Not fixed here.** SPEC 19's catalogue has no code for a missing conversion rate, so adding
+one is a specification change rather than an implementation detail, and this run was asked to
+measure rather than to alter the rejection vocabulary. The recommended fix is a new SPEC 19
+reason (`MISSING_CONVERSION_RATE`) surfaced at `Stage.SIZING`, which would have made this
+visible in the first table anyone read.
+
+### 3. S4's ceiling binds, and it is per symbol
+
+D-014 §3 recorded `max_sl_pips` as unreachable under S4 *on the fixture* and named the real
+question: does a real H4 ATR spend time above 40 pips?
+
+| Symbol | median H4 ATR (pips) | ceiling | above it |
+|---|---:|---:|---:|
+| GBPUSD | 38.9 | 40 | **47%** |
+| GBPJPY | 42.9 | 60 | 16% |
+| USDCAD | 28.7 | 40 | 16% |
+| EURJPY | 28.9 | 60 | 10% |
+| AUDUSD | 24.3 | 40 | 9% |
+| EURUSD | 25.4 | 40 | 9% |
+| USDCHF | 22.1 | 40 | 8% |
+| USDJPY | 22.1 | 60 | 4% |
+| NZDUSD | 23.4 | 40 | 3% |
+| EURGBP | 19.5 | 40 | 1% |
+
+**12% overall, and the spread across symbols is the finding.** S4 is neither an unavailable
+model nor a universally usable one; it is available in proportion to the symbol's volatility.
+GBPUSD loses nearly half its setups to it, EURGBP almost none.
+
+Two things this exposed that the one-symbol fixture could not:
+
+- **The ceiling is 60 pips of ATR for JPY pairs, not 40**, because `max_sl_pips` is
+  `{default: 60, JPY: 90}`. The first real run computed one ceiling for the whole universe
+  and misreported all three JPY pairs.
+- The median real H4 ATR is **26.5 pips** against the fixture's 17.4, and the median accepted
+  stop **31.5 pips** against 23.6 — stops roughly a third wider.
+
+### 4. The account sweep's denominator was circular
+
+SPEC 18.2's sweep asks *how much of the setup stream each account size can size*. It was fed
+only the distances of setups that **had already sized successfully at the default equity**,
+so its population was defined by the one number it exists to vary. On a one-symbol fixture
+that was close to harmless; on ten symbols it reported "100% sizeable at USD 2,000" over a
+stream from which six symbols had silently vanished.
+
+Fixed by capturing every setup whose stop **cleared the SPEC 16.3 caps** — stage `SIZING` or
+later — so the stream is defined by the stop rules. `Decision.plan` is `None` on a sizing
+rejection, so the distance comes from the armed plan; `EntryPlan.risk_distance` and
+`StopCheck.sl_distance` are both `abs(entry_price - stop)`, verified in `stops.check_stop`
+rather than assumed.
+
+**The answer did not move**: USD 2,000 still sizes 95% of the stream, on stops a third wider
+than the fixture's. That is worth knowing precisely because the correction could have moved
+it and did not.
+
+### 5. `M_eff` transferred again
+
+**1.32** over 1,528 setups, against the fixture's 1.36 — the second `M_eff` in the project to
+survive contact with real data nearly unchanged (D-022's order-block figure went 1.77 → 1.68).
+Use 1.32, not 4, in any S1–S4 correction.
+
+### 6. What this does not establish
+
+**Anything about the portfolio limits.** Nothing closes a trade until Phase 14, so the ledger
+fills to `max_open_positions` and the limits-on/limits-off comparison still measures the
+absence of exits (`STATE.md` rule 40, unchanged).
+
+**The correlation cap's realised effect.** The universe is ten symbols now, so cluster
+membership is finally measurable — but not here, for the same reason: it needs closed trades.
+Phase 14.
+
+**That `M_eff` holds outside this split.** Recomputed in-sample, and it should not be
+recomputed out of sample to check (protocol §7).

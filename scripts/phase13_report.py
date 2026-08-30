@@ -13,15 +13,22 @@ The fixture is used for the things that *are* properties of the setup stream: wh
 caps bind, how far apart the four stop models actually are, and how much of the stream a
 given account size can size.
 
-    python scripts/phase13_report.py
+    python scripts/phase13_report.py              # real bars, data/parquet
+    python scripts/phase13_report.py --synthetic  # the original fixture
+
+**The default is real data**, which is what makes three of this report's open questions
+answerable: whether a real H4 ATR clears S4's 40-pip ceiling, which of the two upper
+stop caps actually binds, and what the minimum viable account is at real stop scale.
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import statistics
 import subprocess
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,9 +45,11 @@ from bot.core.indicators import atr_ref  # noqa: E402
 from bot.core.mss import analyse_mss  # noqa: E402
 from bot.core.order_blocks import ObDefinition, propose  # noqa: E402
 from bot.core.risk import (  # noqa: E402
+    MissingConversionRate,
     OpenPosition,
     RiskLedger,
     realised_risk_distribution,
+    size_for_setup,
 )
 from bot.core.sessions import build_sessions  # noqa: E402
 from bot.core.stops import StopModel, dominant_upper_cap, symbol_spec  # noqa: E402
@@ -49,9 +58,11 @@ from bot.core.sweeps import analyse_sweeps  # noqa: E402
 from bot.core.swings import detect_swings  # noqa: E402
 from bot.core.targets import TargetModel, gate_is_reachable  # noqa: E402
 from bot.core.trade import Stage, evaluate  # noqa: E402
+from bot.data.ingest import DatasetManifest, read_series  # noqa: E402
 from bot.data.resample import resample  # noqa: E402
 from bot.data.synthetic import generate  # noqa: E402
 from bot.research.risk_study import (  # noqa: E402
+    AccountRow,
     StopProposals,
     account_sweep,
     ladder_profile,
@@ -62,8 +73,11 @@ from bot.research.risk_study import (  # noqa: E402
 )
 
 UTC = timezone.utc
-OUT = Path("reports/phase13_gate.md")
-YEARS = (2024, 2025, 2026)
+PARQUET = Path("data/parquet")
+SYNTH_YEARS = (2024, 2025, 2026)
+
+# PRE_REGISTRATION section 4.1 as stamped by Amendment 1.
+IS_YEARS, OOS_YEARS = 4, 2
 EQUITIES = (500, 1_000, 2_000, 5_000, 10_000, 25_000, 50_000, 100_000)
 SL_LABEL = {
     StopModel.S1_SWEEP_EXTREME: "S1 — sweep extreme",
@@ -99,34 +113,91 @@ def _run_purity_tests() -> tuple[bool, str]:
     return proc.returncode == 0, (lines[-1] if lines else "no summary line")
 
 
-def build_year(cfg, year: int, seed: int):
-    m1 = generate(
-        "EURUSD", datetime(year, 1, 1, tzinfo=UTC),
-        datetime(year, 12, 31, 23, 59, tzinfo=UTC), cfg, timeframe="M1", seed=seed,
-    )
-    h4 = resample(m1, "H4", cfg)
-    d1 = resample(m1, "D1", cfg)
-    m15 = resample(m1, "M15", cfg)
+def acquired_years(manifest: DatasetManifest, ingest_tf: str) -> list[int]:
+    years: set[int] = set()
+    for e in manifest.series:
+        if e.timeframe != ingest_tf or not e.first_bar_utc or not e.last_bar_utc:
+            continue
+        a = datetime.fromisoformat(e.first_bar_utc).year
+        b = datetime.fromisoformat(e.last_bar_utc).year
+        years.update(range(a, b + 1))
+    return sorted(years)
+
+
+def split(years: list[int]) -> dict[str, list[int]]:
+    return {
+        "in_sample": years[:IS_YEARS],
+        "out_of_sample": years[IS_YEARS : IS_YEARS + OOS_YEARS],
+        "holdout": years[IS_YEARS + OOS_YEARS :],
+    }
+
+
+def _finish(cfg, h4, d1, w1, mn1, sessions):
     st = analyse_structure(h4, cfg)
     _, sw = analyse_sweeps(
-        cfg=cfg, h4=h4, d1=d1, w1=resample(m1, "W1", cfg), mn1=resample(m1, "MN1", cfg),
-        sessions=build_sessions(m15, cfg), h4_structure=st, d1_swings=detect_swings(d1, cfg),
+        cfg=cfg, h4=h4, d1=d1, w1=w1, mn1=mn1,
+        sessions=sessions, h4_structure=st, d1_swings=detect_swings(d1, cfg),
     )
     fvgs = detect_fvgs(h4, cfg)
     res = analyse_mss(h4, cfg, sw.confirmed(), swings=st.swings, fvgs=fvgs)
     return h4, st, fvgs, res, atr_ref(h4, cfg.atr.period)
 
 
-def main() -> int:
-    cfg, cfg_hash = load_config()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    spec = symbol_spec(cfg, "EURUSD")
-    pip = spec.pip_size
+def build_real(cfg, symbol: str, years: list[int], root: Path):
+    """This phase needs no M1 -- the pre-trade chain never resolves a fill."""
+    return _finish(
+        cfg,
+        read_series(root, symbol, "H4", years=years),
+        read_series(root, symbol, "D1", years=years),
+        read_series(root, symbol, "W1", years=years),
+        read_series(root, symbol, "MN1", years=years),
+        build_sessions(read_series(root, symbol, cfg.session.source_tf, years=years), cfg),
+    )
 
-    built = []
-    for k, year in enumerate(YEARS):
-        print(f"building {year} (M1) ...", flush=True)
-        built.append(build_year(cfg, year, seed=41 + k))
+
+def build_synthetic(cfg, year: int, seed: int):
+    m1 = generate(
+        "EURUSD", datetime(year, 1, 1, tzinfo=UTC),
+        datetime(year, 12, 31, 23, 59, tzinfo=UTC), cfg, timeframe="M1", seed=seed,
+    )
+    return _finish(
+        cfg, resample(m1, "H4", cfg), resample(m1, "D1", cfg),
+        resample(m1, "W1", cfg), resample(m1, "MN1", cfg),
+        build_sessions(resample(m1, "M15", cfg), cfg),
+    )
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--synthetic", action="store_true", help="the original fixture")
+    ap.add_argument("--skip-tests", action="store_true", help="skip the suite")
+    args = ap.parse_args()
+
+    cfg, cfg_hash = load_config()
+    real = not args.synthetic
+    OUT = Path("reports/phase13_gate.md" if real else "reports/phase13_gate_synthetic.md")
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+
+    dataset_hash = tzdata = source_label = price_side = "-"
+    splits: dict[str, list[int]] = {}
+    if real:
+        manifest = DatasetManifest.load(PARQUET / "manifest.json")
+        dataset_hash, tzdata = manifest.dataset_hash, manifest.tzdata_version
+        source_label, price_side = manifest.source, manifest.price_side
+        splits = split(acquired_years(manifest, manifest.ingest_timeframe))
+        is_years = splits["in_sample"]
+        units = list(cfg.symbols)
+    else:
+        is_years = list(SYNTH_YEARS)
+        units = list(SYNTH_YEARS)
+    symbol_years = len(units) * len(is_years) if real else len(units)
+
+    # Per symbol, because a JPY pair's pip is 0.01 against 0.0001 and `max_sl_pips`
+    # is {default: 60, JPY: 90}.  Pooling these would be wrong by a factor of 100.
+    sl_dist_by_sym: dict[str, list[float]] = {}
+    atr_pips_by_sym: dict[str, list[float]] = {}
+    #: symbol -> [sized at the default equity, reached the sizing stage]
+    sizeable_by_sym: dict[str, list[int]] = {}
 
     n_pop = n_bars = 0
     rows: list[StopProposals] = []
@@ -143,7 +214,20 @@ def main() -> int:
     limits_off = Counter()
 
     print("running the pre-trade chain ...", flush=True)
-    for h4, st, fvgs, res, atr in built:
+    for _i, unit in enumerate(units):
+        _t0 = time.time()
+        if real:
+            sym = unit
+            print(f"[{_i + 1}/{len(units)}] {sym} {is_years[0]}-{is_years[-1]} ...",
+                  flush=True)
+            h4, st, fvgs, res, atr = build_real(cfg, sym, is_years, PARQUET)
+        else:
+            sym = "EURUSD"
+            print(f"building {unit} (M1) ...", flush=True)
+            h4, st, fvgs, res, atr = build_synthetic(cfg, unit, seed=41 + _i)
+        pip = symbol_spec(cfg, sym).pip_size
+        sl_dist_by_sym.setdefault(sym, [])
+        atr_pips_by_sym.setdefault(sym, [])
         n_bars += h4.n
         pop = [c for c in res.candidates if c.is_choch and c.displacement.confirmed]
         n_pop += len(pop)
@@ -156,7 +240,8 @@ def main() -> int:
             if not np.isfinite(atr_v) or atr_v <= 0:
                 continue
             atr_pips_all.append(atr_v / pip)
-            cap_choice[dominant_upper_cap(cfg, "EURUSD", atr_v)] += 1
+            atr_pips_by_sym[sym].append(atr_v / pip)
+            cap_choice[dominant_upper_cap(cfg, sym, atr_v)] += 1
             ob = propose(
                 h4, cfg, direction=c.direction, sweep_extreme_bar=c.sweep_extreme_bar,
                 leg_start=a, break_bar=c.choch_bar, reference_price=c.reference_price,
@@ -185,7 +270,7 @@ def main() -> int:
                     row.entry_price = r.plan.price
 
                 d = evaluate(
-                    cfg, r.plan, symbol="EURUSD", atr_value=atr_v,
+                    cfg, r.plan, symbol=sym, atr_value=atr_v,
                     equity=cfg.account.starting_equity, apply_limits=False,
                 )
                 stage_counts[sl_model][d.stage.value] += 1
@@ -193,41 +278,96 @@ def main() -> int:
                     reason_counts[sl_model][d.reason] += 1
                 if d.stage is Stage.STOP:
                     binding[sl_model][d.detail] += 1
+                # The account sweep's population must be the setups whose STOP passed
+                # the SPEC 16.3 caps, not the ones that happened to size at the default
+                # equity -- otherwise its denominator is fixed by the very number it
+                # sweeps.  `Decision.plan` is None on a sizing rejection, so the
+                # distance is taken from the armed plan, which is the same number.
+                if sl_model is StopModel.S1_SWEEP_EXTREME and d.stage not in (
+                    Stage.ARM, Stage.STOP
+                ):
+                    # EntryPlan calls it risk_distance; StopCheck calls it sl_distance.
+                    # Both are abs(entry_price - stop), verified in stops.check_stop.
+                    sl_distances.append(r.plan.risk_distance)
+                    sl_dist_by_sym[sym].append(r.plan.risk_distance)
+                    sizeable_by_sym.setdefault(sym, [0, 0])[1] += 1
+                    if d.ok:
+                        sizeable_by_sym[sym][0] += 1
                 if d.ok:
                     binding[sl_model][d.plan.stop_check.binding] += 1
                     if sl_model is StopModel.S1_SWEEP_EXTREME:
                         accepted_sizing.append(d.plan.sizing)
                         sl_atr_all.append(d.plan.stop_check.sl_atr)
                         sl_pips_all.append(d.plan.stop_check.sl_pips)
-                        sl_distances.append(d.plan.sl_distance)
 
                 # SPEC 18.9: the same stream with the portfolio limits engaged.
                 if sl_model is StopModel.S1_SWEEP_EXTREME:
                     limits_off[d.stage.value] += 1
                     e = evaluate(
-                        cfg, r.plan, symbol="EURUSD", atr_value=atr_v,
+                        cfg, r.plan, symbol=sym, atr_value=atr_v,
                         equity=cfg.account.starting_equity, ledger=ledger,
                     )
                     limits_on[e.stage.value] += 1
                     if e.ok:
                         ledger.open(OpenPosition(
-                            f"{i}", "EURUSD", c.direction, e.plan.risk_pct,
+                            f"{sym}-{i}", sym, c.direction, e.plan.risk_pct,
                             r.plan.valid_from,
                         ))
             if row.stops:
                 rows.append(row)
+        print(f"      {len(pop):,} displaced setups  ({time.time() - _t0:.0f}s)", flush=True)
 
     print("running the scenario battery ...", flush=True)
     scenarios = run_scenarios(cfg)
     agree = stop_agreement(rows, list(StopModel))
     m_eff, m_eff_n = stop_effective_tests(rows, list(StopModel))
     dist = realised_risk_distribution(accepted_sizing)
-    sweep = account_sweep(cfg, sl_distances, EQUITIES) if sl_distances else []
+    # SPEC 18.2: a symbol whose quote currency is not the account currency cannot be
+    # sized without an FX conversion series, and its absence BLOCKS the symbol rather
+    # than defaulting to 1.0.  account_sweep calls size_for_setup directly and so
+    # raises; probe once per symbol and keep the blocked ones out of the sweep.
+    def _sizeable(sym: str) -> bool:
+        try:
+            size_for_setup(
+                cfg, symbol=sym, equity=cfg.account.starting_equity,
+                risk_pct=cfg.risk.pct_per_trade,
+                sl_distance=30 * symbol_spec(cfg, sym).pip_size,
+            )
+        except MissingConversionRate:
+            return False
+        return True
+
+    blocked_syms = sorted(s for s in sl_dist_by_sym if not _sizeable(s))
+    # account_sweep applies ONE symbol's spec to every distance it is handed, so on a
+    # mixed universe it must be run per symbol and the counts pooled afterwards.
+    per_sym_sweep = {
+        s: account_sweep(cfg, d, EQUITIES, symbol=s)
+        for s, d in sl_dist_by_sym.items() if d and s not in blocked_syms
+    }
+    min_eq_by_sym = {s: minimum_viable_equity(rs) for s, rs in per_sym_sweep.items()}
+    sweep = []
+    for _k in range(len(EQUITIES)):
+        _at = [rs[_k] for rs in per_sym_sweep.values()]
+        if not _at:
+            break
+        _meds = [r.median_lots for r in _at if np.isfinite(r.median_lots)]
+        sweep.append(AccountRow(
+            equity=_at[0].equity,
+            n=sum(r.n for r in _at),
+            accepted=sum(r.accepted for r in _at),
+            below_min=sum(r.below_min for r in _at),
+            under_risk=sum(r.under_risk for r in _at),
+            median_lots=float(np.median(_meds)) if _meds else float("nan"),
+        ))
     min_eq = minimum_viable_equity(sweep) if sweep else float("nan")
 
-    print("running test suite ...", flush=True)
-    tests_ok, tests_line = _run_tests()
-    purity_ok, purity_line = _run_purity_tests()
+    if args.skip_tests:
+        tests_ok, tests_line = True, "SKIPPED (--skip-tests)"
+        purity_ok, purity_line = True, "SKIPPED (--skip-tests)"
+    else:
+        print("running test suite ...", flush=True)
+        tests_ok, tests_line = _run_tests()
+        purity_ok, purity_line = _run_purity_tests()
 
     n_scen_ok = sum(1 for s in scenarios if s.ok)
     accepted_s1 = stage_counts[StopModel.S1_SWEEP_EXTREME][Stage.ACCEPTED.value]
@@ -289,7 +429,23 @@ def main() -> int:
     w(f"Generated {datetime.now(UTC).isoformat(timespec='seconds')}")
     w("")
     w(f"- `config_hash` `{cfg_hash}`")
-    w(f"- Fixture: {len(YEARS)} synthetic years ({YEARS[0]}-{YEARS[-1]}), EURUSD, generated at M1")
+    if real:
+        w(f"- `dataset_hash` `{dataset_hash}`")
+        w(
+            f"- Data: **real bars** -- {len(units)} symbols, {is_years[0]}-{is_years[-1]} "
+            f"({symbol_years} symbol-years), H4, source `{source_label}`, `{price_side}` "
+            f"side, tzdata `{tzdata}`"
+        )
+        w(
+            f"- Split (PRE_REGISTRATION 4.1, Amendment 1): in-sample "
+            f"**{splits['in_sample']}**, out-of-sample {splits['out_of_sample']}, "
+            f"holdout {splits['holdout']}"
+        )
+        w("- **Each symbol is sized under its own `symbol_spec`** — a JPY pair's pip is "
+          "0.01 against 0.0001, and `risk.max_sl_pips` is {default: 60, JPY: 90}")
+    else:
+        w(f"- Fixture: {len(SYNTH_YEARS)} synthetic years "
+          f"({SYNTH_YEARS[0]}-{SYNTH_YEARS[-1]}), EURUSD, generated at M1")
     w(f"- **{n_pop:,} displaced CHoCH setups** over {n_bars:,} H4 bars")
     w(f"- Account: {cfg.account.currency} {cfg.account.starting_equity:,.0f} at "
       f"{cfg.risk.pct_per_trade}% per trade")
@@ -416,27 +572,66 @@ def main() -> int:
 
     w("### S4 has a hard ATR ceiling, and it is not the ATR cap")
     w("")
+    # The ceiling is per symbol: max_sl_pips is {default: 60, JPY: 90}, so a JPY pair's
+    # S4 ceiling is 60 pips of ATR against 40 for the rest.  Pooling one ceiling across
+    # a mixed universe would misreport both groups.
+    def _ceiling(sym: str) -> float:
+        caps = cfg.risk.max_sl_pips
+        return caps.get("JPY" if "JPY" in sym else "default", caps["default"]) / cfg.sl.atr_multiple
+
     ceiling = cfg.risk.max_sl_pips["default"] / cfg.sl.atr_multiple
-    over = float(np.mean([p > ceiling for p in atr_pips_all])) if atr_pips_all else float("nan")
+    _over_n = sum(
+        1 for s, ps in atr_pips_by_sym.items() for p in ps if p > _ceiling(s)
+    )
+    _over_d = sum(len(ps) for ps in atr_pips_by_sym.values())
+    over = (_over_n / _over_d) if _over_d else float("nan")
     w(f"S4's stop is `atr_multiple` x ATR = {cfg.sl.atr_multiple} ATR by construction, and")
-    w(f"`max_sl_pips` is {cfg.risk.max_sl_pips['default']:.0f} pips. The two cross at")
-    w(f"**{ceiling:.0f} pips of ATR**: above that, S4 is `SL_TOO_WIDE` on every setup,")
-    w("whatever the setup looks like.")
+    w(f"`max_sl_pips` is {cfg.risk.max_sl_pips['default']:.0f} pips "
+      f"({cfg.risk.max_sl_pips['JPY']:.0f} for JPY pairs). The two cross at")
+    w(f"**{ceiling:.0f} pips of ATR** ({_ceiling('USDJPY'):.0f} for JPY): above that, S4 is")
+    w("`SL_TOO_WIDE` on every setup, whatever the setup looks like.")
     w("")
     if atr_pips_all:
-        w(f"- Fixture H4 ATR: median **{statistics.median(atr_pips_all):.1f} pips**, "
-          f"{over:.0%} of setups above the {ceiling:.0f}-pip ceiling — so **the ceiling")
-        w(f"  never binds here** and S4 arms on all {sum(stage_counts[StopModel.S4_ATR].values()):,} setups")
+        _s4_acc = stage_counts[StopModel.S4_ATR][Stage.ACCEPTED.value]
+        _s4_tot = sum(stage_counts[StopModel.S4_ATR].values())
+        if over > 0:
+            w(f"- H4 ATR: median **{statistics.median(atr_pips_all):.1f} pips**, and")
+            w(f"  **{over:.0%} of setups sit above their own symbol's ceiling** — so the")
+            w(f"  ceiling **does** bind, on roughly one setup in {1/over:.0f}")
+        else:
+            w(f"- H4 ATR: median **{statistics.median(atr_pips_all):.1f} pips**, "
+              f"{over:.0%} of setups above the ceiling — so **the ceiling never binds here**")
+        w(f"- S4 accepts {_s4_acc:,} of {_s4_tot:,} setups end to end")
     w(f"- Mirror image: `max_sl_atr` is {cfg.risk.max_sl_atr} and S4 is "
       f"{cfg.sl.atr_multiple}, so **under S4 the ATR cap can never fire** — that half is")
     w("  arithmetic between two constants and holds on any data")
     w("")
-    w("**The ceiling is arithmetic; whether it binds is a measurement, and this fixture")
-    w("cannot make it.** `synthetic.py`'s walk produces a median H4 ATR of "
-      f"{statistics.median(atr_pips_all):.1f} pips" if atr_pips_all else "")
-    w("against a 40-pip threshold. Whether a real EURUSD H4 series spends time above 40")
-    w("pips of ATR decides whether S4 is a usable model or an unavailable one, and that is")
-    w("a question for the first run on real bars — not one this report can answer.")
+    if real and atr_pips_all:
+        w("**The fixture could not answer this and real bars do.** The synthetic walk's")
+        w("median H4 ATR was 17.4 pips against a 40-pip threshold, so the ceiling never")
+        w(f"came near binding; the real median is {statistics.median(atr_pips_all):.1f} pips")
+        w(f"and {over:.0%} of setups clear their symbol's ceiling outright.")
+        w("")
+        w("| Symbol | median H4 ATR (pips) | ceiling | above it |")
+        w("|---|---:|---:|---:|")
+        for _s in sorted(atr_pips_by_sym):
+            _ps = atr_pips_by_sym[_s]
+            if not _ps:
+                continue
+            _c = _ceiling(_s)
+            _sh = sum(1 for p in _ps if p > _c) / len(_ps)
+            w(f"| {_s} | {statistics.median(_ps):.1f} | {_c:.0f} | {_sh:.0%} |")
+        w("")
+        w("**So S4 is a partially available model rather than an unavailable one or a")
+        w("universally usable one**, and which it is depends on the symbol. That is the")
+        w("question D-014 §3 left open, answered.")
+    elif atr_pips_all:
+        w("**The ceiling is arithmetic; whether it binds is a measurement, and this fixture")
+        w("cannot make it.** `synthetic.py`'s walk produces a median H4 ATR of "
+          f"{statistics.median(atr_pips_all):.1f} pips")
+        w("against a 40-pip threshold. Whether a real H4 series spends time above 40")
+        w("pips of ATR decides whether S4 is a usable model or an unavailable one, and that")
+        w("is a question for the first run on real bars — not one this report can answer.")
     w("")
     w("Two FROZEN defaults that were each reasonable alone. Reported, not changed: SPEC")
     w("16.3's caps and `sl.atr_multiple` are both frozen, and moving one to make the other")
@@ -525,7 +720,55 @@ def main() -> int:
     w("the same stop distance is tradable on one account and not on another. That makes")
     w("this the one number in the risk layer that depends on a value chosen for reporting,")
     w(f"so it is swept rather than quoted. Measured against the {len(sl_distances):,}")
-    w("stop distances the fixture actually produced.")
+    w("stop distances whose stop cleared the SPEC 16.3 caps" + (
+        ", each sized under its own symbol's spec and the counts pooled afterwards."
+        if real else "."
+    ))
+    w("")
+    w("**The population is the cap-passing setups, not the ones that sized.** Feeding it")
+    w("the accepted setups instead would fix the denominator at one equity — the very")
+    w("number the sweep varies — and report a curve that cannot fall below the default.")
+    if real and blocked_syms:
+        w("")
+        w(f"Restricted to the {len(per_sym_sweep)} sizeable symbols; the "
+          f"{len(blocked_syms)} blocked ones cannot be swept at any equity.")
+    if real and sizeable_by_sym:
+        w("")
+        w(f"### {len(blocked_syms)} of the {len(sizeable_by_sym)} symbols cannot be sized "
+          "at all, and it is not the account size")
+        w("")
+        w("| Symbol | quote | reached sizing | sized | why not |")
+        w("|---|---|---:|---:|---|")
+        for _s, (_a, _n) in sorted(sizeable_by_sym.items()):
+            _q = _s[3:]
+            _why = (
+                f"**no {_q}->{cfg.account.currency} rate** (SPEC 18.2)"
+                if _s in blocked_syms else "—"
+            )
+            w(f"| {_s} | {_q} | {_n:,} | {_a:,} | {_why} |")
+        w("")
+        w("**Every blocked symbol is one whose QUOTE currency is not the account")
+        w(f"currency.** Sizing needs the quote->{cfg.account.currency} rate to convert a")
+        w("stop distance into money, SPEC 18.2 says its absence *blocks the inclusion of")
+        w("any symbol*, and there is no rate series — Q1 is still open. The four that size")
+        w(f"are exactly the {cfg.account.currency}-quoted pairs, where the rate is 1 by")
+        w("identity. This is the rule working as written; it is not a defect and not a")
+        w("function of `starting_equity`.")
+        w("")
+        w("**It does not look like that in the rejection log, and that is a defect.**")
+        w("`trade.evaluate` catches `MissingConversionRate` and returns")
+        w("`RiskReject.SIZE_BELOW_MIN`, so all 6 symbols report a lot-granularity failure")
+        w("they did not have. Reading that table without running the sizing call directly")
+        w("leads to the wrong diagnosis — *\"the account is too small\"* — and to the wrong")
+        w("fix. **This is D-019 §1 recurring**: a rejection reason names the gate that")
+        w("refused, not the reason it refused. SPEC 19's catalogue has no code for a")
+        w("missing conversion rate, so adding one is a specification change and is left")
+        w("alone here rather than made silently.")
+        w("")
+        w("**What it costs now**: the pre-registration's cross-sectional criterion — *\"≥ 6")
+        w("of 10 symbols with positive expectancy, same parameters\"* (§3) — is")
+        w("**unevaluable** until Q1 supplies a rate series, because only 4 symbols can")
+        w("carry a sized trade. Everything below is measured on those four.")
     w("")
     w("| Equity | Sizeable | `SIZE_BELOW_MIN` | `SIZE_UNDER_RISK` | Median lots |")
     w("|---:|---:|---:|---:|---:|")
@@ -538,12 +781,28 @@ def main() -> int:
           f"{cfg.account.currency} {min_eq:,.0f}.**")
     else:
         w("**No swept account size reaches 95% of this stream.**")
+    if real and min_eq_by_sym:
+        w("")
+        w("Per symbol, since each is sized under its own spec:")
+        w("")
+        w("| Symbol | smallest account sizing 95% |")
+        w("|---|---:|")
+        for _s in sorted(min_eq_by_sym):
+            _v = min_eq_by_sym[_s]
+            w(f"| {_s} | " + (f"{cfg.account.currency} {_v:,.0f}"
+                              if np.isfinite(_v) else "none swept") + " |")
     w("")
-    w("**That figure is a function of the stop distances, and this fixture's are narrow**")
-    w(f"— a median of {statistics.median(sl_pips_all):.1f} pips, because the synthetic")
-    w(f"walk's median H4 ATR is only {statistics.median(atr_pips_all):.1f} pips. A market")
-    w("with wider stops needs a proportionally larger account for the same coverage, so")
-    w("the number is reported against a scale factor rather than on its own:")
+    if real:
+        w("**That figure is a function of the stop distances**, whose median here is")
+        w(f"{statistics.median(sl_pips_all):.1f} pips against the fixture's 23.6 — so the")
+        w("stops widened by roughly a third and the answer did not move. The scale table")
+        w("below is kept because it says how far it *would* have to move:")
+    else:
+        w("**That figure is a function of the stop distances, and this fixture's are narrow**")
+        w(f"— a median of {statistics.median(sl_pips_all):.1f} pips, because the synthetic")
+        w(f"walk's median H4 ATR is only {statistics.median(atr_pips_all):.1f} pips. A market")
+        w("with wider stops needs a proportionally larger account for the same coverage, so")
+        w("the number is reported against a scale factor rather than on its own:")
     w("")
     w("| Stop distances | Median stop | Smallest account sizing 95% |")
     w("|---:|---:|---:|")
@@ -626,11 +885,25 @@ def main() -> int:
     w("   to be re-run at (*\"Both checks are required\"*) for the unrelated reason that")
     w("   the spread moves.")
     w("")
-    w("**On this fixture the effect measures exactly zero**, because `synthetic.py` emits")
-    w("a perfectly continuous walk and every bar opens at the previous close — the same")
-    w("reason SPEC 15.3's own lookahead measured 0.0000 ATR in Phase 12 (D-013 §3). The")
-    w("mechanism is pinned by constructed tests and is the first thing to re-measure when")
-    w("real bars arrive.")
+    if real:
+        w("**The effect is no longer zero, and its size is Phase 12's number.** How far the")
+        w("S4 stop moves between arming and filling is exactly the close-to-open gap, which")
+        w("D-025 measured on this same data at a **mean 0.0156 ATR** (median non-zero 0.0049,")
+        w("95th percentile 0.0353, largest 3.9978). On the fixture it was 0.0000 by")
+        w("construction.")
+        w("")
+        w("**This report does not measure it itself** — the pre-trade chain never resolves a")
+        w("fill, so the number above is cited from Phase 12 rather than recomputed here. What")
+        w("it means for S4 is that the stop, and therefore the risk denominator every R is")
+        w("divided by, is set from a price the plan did not know. SPEC 16.5 already requires")
+        w("the caps to be re-run at fill for the unrelated reason that the spread moves; that")
+        w("re-run is now load-bearing for a second reason.")
+    else:
+        w("**On this fixture the effect measures exactly zero**, because `synthetic.py` emits")
+        w("a perfectly continuous walk and every bar opens at the previous close — the same")
+        w("reason SPEC 15.3's own lookahead measured 0.0000 ATR in Phase 12 (D-013 §3). The")
+        w("mechanism is pinned by constructed tests and is the first thing to re-measure when")
+        w("real bars arrive.")
     w("")
 
     # ------------------------------------------------------- what is not established
@@ -653,12 +926,23 @@ def main() -> int:
     w("   but every number here is EURUSD on a USD account, where the rate is 1 by")
     w("   identity. The 40%-error case SPEC 18.2 warns about is a JPY-pair case and needs")
     w("   the rate series.")
-    w("6. **The correlation cap's realised effect.** `correlation_clusters` is implemented")
-    w("   and scenario-tested including SPEC 18.7's directional equivalence, but the")
-    w("   fixture is one symbol. Cluster membership on the real universe is a")
-    w("   multi-symbol measurement.")
-    w("7. **`M_eff` on real bars.** Like Phase 11's, it is a property of how the four")
-    w("   models behave on *this* fixture. Recompute it before correcting anything.")
+    if real:
+        w("6. **The correlation cap's realised effect.** `correlation_clusters` is")
+        w("   implemented and scenario-tested including SPEC 18.7's directional")
+        w("   equivalence. The universe is now ten symbols, so cluster membership *is*")
+        w("   measurable — but not here: nothing closes a trade until Phase 14, so the")
+        w("   ledger fills to `max_open_positions` and stops being informative (see the")
+        w("   limits caveat above). It is a Phase 14 measurement, not a blocked one.")
+        w("7. **That `M_eff` holds outside this split.** Recomputed here on real in-sample")
+        w("   bars, and it should not be recomputed out of sample to check — that spends")
+        w("   budget on a nuisance parameter (protocol §7).")
+    else:
+        w("6. **The correlation cap's realised effect.** `correlation_clusters` is implemented")
+        w("   and scenario-tested including SPEC 18.7's directional equivalence, but the")
+        w("   fixture is one symbol. Cluster membership on the real universe is a")
+        w("   multi-symbol measurement.")
+        w("7. **`M_eff` on real bars.** Like Phase 11's, it is a property of how the four")
+        w("   models behave on *this* fixture. Recompute it before correcting anything.")
     w("")
     w(f"## Verdict: {'PASS' if all_ok else 'FAIL'}")
     w("")

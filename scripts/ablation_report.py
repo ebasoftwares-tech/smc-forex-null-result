@@ -13,6 +13,11 @@ can be toggled at all, and which of the shipped defaults are live.
 
 from __future__ import annotations
 
+import argparse
+import os
+import time
+from concurrent.futures import ProcessPoolExecutor
+
 import re
 import subprocess
 import sys
@@ -25,6 +30,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bot.backtest.engine import build_market, run  # noqa: E402
+from bot.data.ingest import DatasetManifest, read_series  # noqa: E402
 from bot.config.loader import load_config  # noqa: E402
 from bot.research import ablation as A  # noqa: E402
 from bot.research import falsification as F  # noqa: E402
@@ -32,7 +38,12 @@ from bot.research import stats  # noqa: E402
 
 UTC = timezone.utc
 OUT = Path("reports/ablation.md")
-YEARS = (2024, 2025, 2026)
+PARQUET = Path("data/parquet")
+SYNTH_YEARS = (2024, 2025, 2026)
+
+# PRE_REGISTRATION section 4.1 as stamped by Amendment 1.
+IS_YEARS, OOS_YEARS = 4, 2
+_META: dict = {}
 RNG_SEED = 20260828
 
 
@@ -50,46 +61,127 @@ def _f(x, nd=4) -> str:
     return "--" if x is None or not np.isfinite(x) else f"{x:.{nd}f}"
 
 
-def _arm(cfg, markets, cfg_hash):
-    """One pooled arm over every fixture year."""
-    made = [
-        F.arm_from(F.BASELINE, mk, run(cfg, mk, config_hash=cfg_hash, apply_limits=False))
-        for mk in markets
-    ]
-    return F.pooled(F.BASELINE, made)
+def acquired_years(manifest: DatasetManifest, ingest_tf: str) -> list[int]:
+    years: set[int] = set()
+    for e in manifest.series:
+        if e.timeframe != ingest_tf or not e.first_bar_utc or not e.last_bar_utc:
+            continue
+        a = datetime.fromisoformat(e.first_bar_utc).year
+        b = datetime.fromisoformat(e.last_bar_utc).year
+        years.update(range(a, b + 1))
+    return sorted(years)
+
+
+def split(years: list[int]) -> dict[str, list[int]]:
+    return {
+        "in_sample": years[:IS_YEARS],
+        "out_of_sample": years[IS_YEARS : IS_YEARS + OOS_YEARS],
+        "holdout": years[IS_YEARS + OOS_YEARS :],
+    }
+
+
+def _unit_arms(task):
+    """Baseline and every runnable variant for ONE market: the unit of parallelism.
+
+    Module-level and self-contained so it survives `spawn` on Windows.  Returns `Arm`
+    objects keyed by `spec.name`, which is unique across the matrix and is already the
+    key the Benjamini-Hochberg step uses.
+    """
+    unit, is_years, real = task
+    cfg, cfg_hash = load_config()
+
+    if real:
+        m1 = read_series(PARQUET, unit, "M1", years=is_years)
+    else:
+        m1 = generate_year(cfg, unit, 41 + is_years.index(unit))
+    mk = build_market(cfg, m1)
+
+    def arm(c, market):
+        return F.arm_from(
+            F.BASELINE, market,
+            run(c, market, config_hash=cfg_hash, apply_limits=False),
+        )
+
+    variants = {}
+    for spec in A.runnable():
+        c, _ = load_config(overrides=dict(spec.overrides or {}))
+        market = build_market(c, m1) if spec.rebuilds_market else mk
+        variants[spec.name] = arm(c, market)
+
+    return unit, {
+        "h4_n": mk.h4.n,
+        "trading_days": A.trading_days_in(mk.h4.close_time),
+        "baseline": arm(cfg, mk),
+        "variants": variants,
+    }
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--synthetic", action="store_true", help="the original fixture")
+    ap.add_argument("--workers", type=int, default=0,
+                    help="0 = auto, 1 = serial (identical numbers, slower)")
+    ap.add_argument("--symbols", default="", help="comma-separated subset, for checking")
+    args = ap.parse_args()
+
     cfg, cfg_hash = load_config()
+    real = not args.synthetic
+    global OUT
+    OUT = Path("reports/ablation.md" if real else "reports/ablation_synthetic.md")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(RNG_SEED)
 
-    m1s, markets = [], []
-    for k, year in enumerate(YEARS):
-        print(f"building {year} (M1) ...", flush=True)
-        m1 = generate_year(cfg, year, 41 + k)
-        m1s.append(m1)
-        markets.append(build_market(cfg, m1))
+    global _META
+    if real:
+        manifest = DatasetManifest.load(PARQUET / "manifest.json")
+        splits = split(acquired_years(manifest, manifest.ingest_timeframe))
+        is_years = splits["in_sample"]
+        units = list(cfg.symbols)
+        if args.symbols:
+            want = {s.strip() for s in args.symbols.split(",")}
+            units = [u for u in units if u in want]
+        _META = {
+            "real": True, "dataset_hash": manifest.dataset_hash,
+            "tzdata": manifest.tzdata_version, "source": manifest.source,
+            "price_side": manifest.price_side, "splits": splits,
+            "is_years": is_years, "n_units": len(units),
+        }
+    else:
+        is_years = list(SYNTH_YEARS)
+        units = list(SYNTH_YEARS)
+        _META = {"real": False, "is_years": is_years, "n_units": len(units)}
 
-    trading_days = sum(A.trading_days_in(mk.h4.close_time) for mk in markets)
-    base = _arm(cfg, markets, cfg_hash)
+    tasks = [(u, is_years, real) for u in units]
+    n_workers = args.workers or min(len(tasks), max(1, (os.cpu_count() or 2) - 1), 5)
+    print(f"building {len(tasks)} markets x {len(A.runnable())} variants on "
+          f"{n_workers} worker(s) ...", flush=True)
+    t0 = time.time()
+    got: dict[object, dict] = {}
+    if n_workers == 1:
+        for task in tasks:
+            u, res = _unit_arms(task)
+            got[u] = res
+            print(f"  {u} ({time.time() - t0:.0f}s elapsed)", flush=True)
+    else:
+        with ProcessPoolExecutor(max_workers=n_workers) as ex:
+            for u, res in ex.map(_unit_arms, tasks):
+                got[u] = res
+                print(f"  {u} ({time.time() - t0:.0f}s elapsed)", flush=True)
+    print(f"built in {time.time() - t0:.0f}s", flush=True)
+
+    order_units = [u for u in units if u in got]
+    _META["h4_bars"] = sum(got[u]["h4_n"] for u in order_units)
+    trading_days = sum(got[u]["trading_days"] for u in order_units)
+    base = F.pooled(F.BASELINE, [got[u]["baseline"] for u in order_units])
     print(f"baseline: {base.n_setups} setups, {base.filled} filled, "
           f"E/setup {base.expectancy_per_setup:+.4f} R, "
           f"{trading_days:.0f} trading days", flush=True)
 
     results: list[A.AblationResult] = []
     for spec in A.runnable():
-        print(f"  {spec.kind.value:9s} {spec.name} ...", flush=True)
-        c, _ = load_config(overrides=dict(spec.overrides or {}))
-        if spec.rebuilds_market:
-            mks = [build_market(c, m1) for m1 in m1s]
-        else:
-            mks = markets
-        made = [
-            F.arm_from(F.BASELINE, mk, run(c, mk, config_hash=cfg_hash, apply_limits=False))
-            for mk in mks
-        ]
-        variant = F.pooled(F.BASELINE, made)
+        variant = F.pooled(
+            F.BASELINE, [got[u]["variants"][spec.name] for u in order_units]
+        )
         results.append(A.evaluate(spec, base, variant, trading_days=trading_days, rng=rng))
 
     # Section 5.6: BH across every runnable row.
@@ -100,7 +192,7 @@ def main() -> int:
     ))
 
     tests_ok, tests_line = _tests()
-    write(cfg, cfg_hash, markets, trading_days, base, results, bh, tests_ok, tests_line)
+    write(cfg, cfg_hash, None, trading_days, base, results, bh, tests_ok, tests_line)
     print(f"\nwrote {OUT}")
     return 0 if tests_ok else 1
 
@@ -113,7 +205,7 @@ def generate_year(cfg, year: int, seed: int):
                     timeframe="M1", seed=seed)
 
 
-def write(cfg, cfg_hash, markets, trading_days, base, results, bh, tests_ok, tests_line):
+def write(cfg, cfg_hash, _unused, trading_days, base, results, bh, tests_ok, tests_line):
     by_name = {r.spec.name: r for r in results}
     L: list[str] = []
     w = L.append
@@ -121,8 +213,14 @@ def write(cfg, cfg_hash, markets, trading_days, base, results, bh, tests_ok, tes
     w("# The ablation matrix -- `BACKTEST_PROTOCOL.md` section 6.5")
     w("")
     w(f"Generated by `scripts/ablation_report.py` - config hash `{cfg_hash}` - fixture: "
-      f"synthetic EURUSD {YEARS[0]}-{YEARS[-1]} "
-      f"({sum(m.h4.n for m in markets):,} H4 bars, {trading_days:.0f} trading days).")
+      + (f"**real bars**: {_META['n_units']} symbols, {_META['is_years'][0]}-"
+         f"{_META['is_years'][-1]} ({_META['h4_bars']:,} H4 bars, "
+         f"{trading_days:.0f} trading days), source `{_META['source']}`, "
+         f"`{_META['price_side']}` side, dataset hash "
+         f"`{_META['dataset_hash'][:16]}`."
+         if _META.get("real") else
+         f"synthetic EURUSD {SYNTH_YEARS[0]}-{SYNTH_YEARS[-1]} "
+         f"({_META['h4_bars']:,} H4 bars, {trading_days:.0f} trading days)."))
     w("")
     w("Not a phase gate. A protocol study, like the H5 study and the falsification suite.")
     w("")

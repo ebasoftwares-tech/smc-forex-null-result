@@ -2682,3 +2682,76 @@ has a price:
 
 None is taken. What the run establishes is that the choice is now a real one, made against a
 measurement instead of an extrapolation.
+---
+
+## D-021 — Pre-registration Amendment 1: the split dates are stamped
+
+| | |
+|---|---|
+| **Date** | 2026-08-30 |
+| **Decided by** | Elie (instruction: *"stamp the pre-registration dates"*) |
+| **Status** | ACTIVE |
+| **Class** | **Amendment** under `PRE_REGISTRATION.md` §10 — *not* a re-registration |
+| **Blob** | `b9142a0fcb0960016162b1c18bb6fa60cfc4a6f5` → `646ddfb6db70d7964051680cb86ad468546a49b9` |
+
+The last open item in `BACKTEST_PROTOCOL.md` §1. Item 4 — the literal date ranges — could not
+be a literal when the pre-registration was written, because no data existed; it was fixed as
+a **rule** instead, and D-018 argued at the time that a rule yielding exactly one answer is as
+binding as a date. Real history arrived on 2026-08-30, so the rule was applied.
+
+### 1. What it did, and why applying it required no judgement
+
+Acquired history: 10 symbols of M1, earliest bar **2019-01-01T22:00Z**, latest
+**2025-12-31T21:58Z** — seven calendar years. §4.1 says earliest four in-sample, next two
+out-of-sample, remainder holdout:
+
+| Split | Literal range (UTC) | Years |
+|---|---|---|
+| In-sample | 2019-01-01T00:00:00Z → 2022-12-31T23:59:59Z | 2019-2022 |
+| Out-of-sample | 2023-01-01T00:00:00Z → 2024-12-31T23:59:59Z | 2023-2024 |
+| Holdout | 2025-01-01T00:00:00Z → 2025-12-31T23:59:59Z | 2025 |
+
+There is no second reading. That is the whole point of having written the rule first, and it
+is why this is an amendment: it changes no threshold, no grid, no `M` and no decision rule,
+which are the four things §10 names as making a change a *new registration* instead.
+
+**Nothing is invalidated.** No out-of-sample evaluation has occurred, so §1's "nothing may be
+changed after the first out-of-sample evaluation" is not engaged. The stamp was triggered by
+the Phase 9 funnel run (D-020), which is the first thing in the project to apply the split to
+real bars, and which read the in-sample years only.
+
+### 2. The stamp is only operative because "the split" and "these year partitions" are the same thing
+
+A bar belongs to the split holding the UTC calendar year of its `open_time`. That is how the
+Parquet store is partitioned and how `ingest.read_series(years=…)` selects, so a run on one
+split provably reads no bar from another. Recorded in §4.1 as a requirement on future
+runners, not as an observation: a runner that filtered by timestamp inside a shared series,
+or that resampled across a boundary, could satisfy the stamped dates on paper while reading
+data it is not entitled to.
+
+### 3. Two consequences the rule produced and nobody chose
+
+Recorded rather than engineered around — engineering around either now would mean choosing a
+split boundary with the data in hand, which is the exact thing §4.1 exists to prevent.
+
+1. **The holdout is a single year**, against four in-sample and two out-of-sample. Seven
+   years is what was acquired and the rule says *"everything after that"*. §3's ≥ 200-trade
+   minimum is stated against the out-of-sample split, so it is not directly violated, but a
+   one-year holdout carrying the final go/no-go is thin — and thinner still given Phase 9's
+   measured rate (D-020). If it proves too thin, that is a finding about the **acquisition**,
+   and the honest response is to acquire more history and re-register, not to redraw the line.
+2. **The out-of-sample/holdout boundary falls mid-week; the in-sample/out-of-sample boundary
+   does not.** 2022-12-31 is a Saturday, so the first out-of-sample week opens cleanly on
+   Sunday 2023-01-01. 2024-12-31 is a **Tuesday**, so the week that opened Sunday 2024-12-29
+   at 22:00 UTC is cut by the boundary and closes on Friday 2025-01-03. Because splits are
+   selected as whole year partitions (§2 above), the week is **truncated, not leaked**: a
+   position still open at the boundary is right-censored by the end of its series rather than
+   resolved from data the run may not see. That is the safe direction, and it is worth knowing
+   when reading trade counts at a split edge.
+
+### 4. What is now closed, and what is not
+
+`BACKTEST_PROTOCOL.md` §1 is **complete**: all seven items fixed, before the first strategy
+backtest, as required. What that does not do is make the project's open questions smaller —
+D-020's failed development-set gate is unaffected by any of this, and Q1 (broker, account
+currency, the real spread and swap tables) is still open.

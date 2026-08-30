@@ -7,11 +7,13 @@
 > invalidated. **The new value was selected by its outcome on synthetic data**; §11 records
 > the provenance in full and it should be read before any T2 number is cited.
 
-**Status: COMMITTED, pending one mechanical amendment.** Six of `BACKTEST_PROTOCOL.md`
-§1's seven items are fixed below. The seventh — item 4, the literal date ranges — is fixed
-as a *rule* that yields exactly one answer when applied to whatever history is acquired
-(Q1/Q2, still open). The concrete dates are stamped from that rule and committed **before
-the first strategy backtest**, as an amendment under §10 of this document.
+**Status: COMMITTED. All seven of `BACKTEST_PROTOCOL.md` §1's items are now fixed.** Six
+were fixed when this document was written. The seventh — item 4, the literal date ranges —
+was fixed as a *rule* that yields exactly one answer when applied to whatever history is
+acquired, because at the time no data existed to apply it to. History was acquired on
+2026-08-30 (Q2 answered) and the rule was applied to it mechanically: **Amendment 1**,
+recorded in §4.1 and §10, stamped **before the first strategy backtest** exactly as this
+document scheduled. It changed no threshold, no grid, no `M` and no decision rule.
 
 **Nothing in this file may be changed after the first out-of-sample evaluation.** Its hash
 is recorded in `STATE.md` §2 and in the commit that introduced it. Verify with:
@@ -145,6 +147,10 @@ projection is the first thing real data does.
 
 ### 4.1 Time
 
+*The paragraph and rule table below are the text as registered on 2026-08-28, when no data
+existed, and are left verbatim. Amendment 1 at the end of this section stamps the dates the
+rule yields.*
+
 Item 4 of §1 is the only one that cannot be a literal today: no data has been acquired.
 Fixing invented dates would be worse than fixing none, and leaving the item blank until the
 data is in hand would mean completing the pre-registration after seeing the sample. **So it
@@ -163,8 +169,25 @@ The acquired period **must** contain 2020 (volatility shock), 2022 (trending) an
 one extended range regime (§2). A source that cannot supply those is rejected before the
 splits are drawn, not accommodated by redrawing them.
 
-**Amendment:** the literal dates are computed from this rule at acquisition, appended to
-§10, and committed before the first run. That commit changes no threshold and no grid.
+**Amendment 1 (2026-08-30) stamped the literal dates.** The acquired history is 10
+symbols of M1 from HistData (`dataset_hash 2a2bb029…`), earliest bar
+**2019-01-01T22:00Z**, latest bar **2025-12-31T21:58Z** — seven calendar years, so the
+rule above yields four, two and one:
+
+| Split | Literal range (UTC) | Calendar years |
+|---|---|---|
+| **In-sample** | 2019-01-01T00:00:00Z → 2022-12-31T23:59:59Z | 2019, 2020, 2021, 2022 |
+| **Out-of-sample** | 2023-01-01T00:00:00Z → 2024-12-31T23:59:59Z | 2023, 2024 |
+| **Holdout** | 2025-01-01T00:00:00Z → 2025-12-31T23:59:59Z | 2025 |
+
+A bar belongs to the split holding the UTC calendar year of its `open_time`. That is how
+the Parquet store is partitioned and how `ingest.read_series(years=…)` selects, so a run
+on one split reads no bar from another. **Any future runner must select the same way**;
+the equivalence of "the split" and "these year partitions" is what makes the stamp
+operative rather than decorative.
+
+Both regimes §4.1 requires by name land **in-sample**: 2020 (volatility shock) and 2022
+(trending). §10 records the two consequences the rule produced that nobody chose.
 
 ### 4.2 Symbols
 
@@ -419,10 +442,9 @@ obtained under the old one is reported as such.
 
 | # | Date | Change | Permitted because |
 |---|---|---|---|
-| — | — | *(none yet)* | — |
+| 1 | 2026-08-30 | §4.1's literal date ranges stamped from the split rule | Mechanical application of a rule fixed in advance; changes no threshold, no grid, no `M` and no decision rule |
 
-**The one amendment already scheduled** is §4.1's literal dates, computed mechanically from
-the split rule at data acquisition. It changes no threshold, no grid and no decision rule.
+**The one amendment that was scheduled has been made** — see the record below. No further amendment is scheduled.
 
 The following are known **new-registration** triggers, named in advance:
 
@@ -431,6 +453,43 @@ The following are known **new-registration** triggers, named in advance:
 - Changing `tp.min_rr` so that T3 can arm. (`tp.min_target_rank` was changed in v1.1 —
   see §11.)
 - Any change to the falsification row's currency rule (§7.1).
+
+### Amendment 1 — 2026-08-30 — §4.1's literal dates
+
+| | |
+|---|---|
+| Superseded | v1.1, blob `b9142a0fcb0960016162b1c18bb6fa60cfc4a6f5` |
+| Class | Scheduled amendment (§10) — **not** a re-registration |
+| Results invalidated | **None.** No out-of-sample evaluation has occurred |
+| Basis | §4.1's rule applied to the acquired history. No discretion was exercised |
+
+The dates are in §4.1. Seven calendar years were acquired (2019-01-01T22:00Z to
+2025-12-31T21:58Z), the rule says earliest four / next two / remainder, and that gives
+**2019-2022 / 2023-2024 / 2025**. There is no second reading of it.
+
+The stamp was triggered by the Phase 9 funnel run (D-020), which is the first thing to
+apply the split to real bars. That run read the in-sample years only.
+
+**Two consequences the rule produced and nobody chose.** Both are recorded rather than
+engineered around, because engineering around either one now would mean choosing a split
+boundary with the data in hand — which is the thing §4.1 exists to prevent.
+
+1. **The holdout is a single year**, against four in-sample and two out-of-sample. The
+   rule says *"everything after that"*, and seven years is what was acquired. It is not
+   widened. §3's ≥ 200-trade minimum is stated against the out-of-sample split; the
+   holdout is touched exactly once and is as large as the history makes it. If one year
+   proves too thin to carry the final go/no-go, that is a finding about the acquisition,
+   and the honest response is to acquire more history and re-register — not to redraw the
+   line.
+2. **The out-of-sample/holdout boundary falls mid-week; the in-sample/out-of-sample
+   boundary does not.** 2022-12-31 is a Saturday, so the first out-of-sample trading week
+   opens cleanly on Sunday 2023-01-01. But 2024-12-31 is a **Tuesday**, so the week that
+   opened Sunday 2024-12-29 at 22:00 UTC is cut in half by the boundary and closes on
+   Friday 2025-01-03. Because splits are selected as whole year partitions, an
+   out-of-sample run reads no holdout bar: the week is **truncated, not leaked**, and a
+   position still open at 2024-12-31T23:59Z is right-censored by the end of its series
+   rather than resolved from data it is not entitled to see. That is the safe direction,
+   and it is worth knowing when reading trade counts at a split edge.
 
 ---
 

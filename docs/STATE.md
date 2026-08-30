@@ -30,7 +30,7 @@ is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 |---|---|
 | **Phases complete** | 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 |
 | **Studies complete** | H5 (SPEC 6.9), the falsification suite (protocol 6.3/6.4), the ablation matrix (6.5) |
-| **Pre-registration** | **COMMITTED at v1.1** — `docs/PRE_REGISTRATION.md`, blob `b9142a0fcb09` (D-018, re-registered by D-019). Item 4's literal dates are outstanding and now **DUE** — §4.1's rule was resolved against real history by the Phase 9 run (D-020 §7) |
+| **Pre-registration** | **COMMITTED at v1.1 + Amendment 1** — `docs/PRE_REGISTRATION.md`, blob `646ddfb6db70` (D-018, re-registered by D-019, amended by D-021). **All seven of protocol §1's items are now fixed**: item 4's literal dates were stamped from §4.1's own rule on 2026-08-30 |
 | **Data** | **Real bars in.** 10 symbols × 2019-2025 M1, `dataset_hash 2a2bb029`, source histdata, bid side, tzdata 2026.3. Splits: in-sample 2019-2022, OOS 2023-2024, holdout 2025. **Q2 answered; Q1 (broker) still open** |
 | **Tests** | 662, all passing |
 | **Commits** | 19, on `master` |
@@ -492,7 +492,7 @@ Each of these cost real effort to find and is easy to undo by accident.
 | 58 | **`ob.definition` reaches the engine only via `cfg`; it was a hardcoded literal for four phases**, so OB-B/C/D had never run end to end. Fixed, and still inert at the shipped defaults because entry C and stop S1 consume no order block (D-017 §2). |
 | 59 | **`tp.min_target_rank = 2.0` makes T2 arm nothing** — a fifth default that cannot fire, on top of D-014's four, and the only target model that aims at a liquidity level (D-017 §3). |
 | 60 | **`M = 9,600`, not `PARAMETERS.md`'s 6,912 or 8,000.** It is computed from the schema's own grids by `preregistration.py` and pinned by a test that parses them back out of the field descriptions. `M` scales the Deflated Sharpe and §5.6's null, so a wrong one mis-corrects every claim (D-018 §1). |
-| 61 | **The pre-registration is committed and its blob hash is in §2.** Changing a threshold, a grid, `M`, or a decision rule in it is **not an amendment** — it is a new pre-registration, and every result under the old one is reported as such (D-018). |
+| 61 | **The pre-registration is committed and its blob hash is in §2.** Changing a threshold, a grid, `M`, or a decision rule in it is **not an amendment** — it is a new pre-registration, and every result under the old one is reported as such (D-018). Exactly one change has qualified as a mere amendment: stamping §4.1's literal split dates, which applied a rule rather than choosing anything (D-021). |
 | 62 | **`INCONCLUSIVE` is a verdict, not a soft FAIL**: fewer than 200 OOS trades, or an MDE exceeding the +0.10 R being tested for. A study that could not have seen the effect has failed to look, not failed to find (D-018 §4). |
 | 63 | **A rejection reason names the gate that refused, not the reason it refused.** T2's `NO_TARGET_AVAILABLE` was read as "no level clears the rank filter"; the filter was never reached, because the engine passed an empty book. Setting the parameter to 0 and seeing nothing change is the one-line check (D-019 §1). |
 | 64 | **The finished `LiquidityBook` cannot be read causally at all.** SPEC 8.8's merge rewrites a survivor's `price`, `tier` and `strength` **in place**. Use `book.active_at(bar)` / `ranks_at(bar)`, never a finished level. Third instance of D-009 §4 / D-011 §3 (D-019 §4). |

@@ -20,6 +20,7 @@ import argparse
 import re
 import subprocess
 import sys
+import textwrap
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -42,6 +43,10 @@ from bot.data.synthetic import generate  # noqa: E402
 UTC = timezone.utc
 PARQUET = Path("data/parquet")
 SYNTH_YEARS = (2024, 2025, 2026)
+
+# The width every hand-wrapped prose line in this report already sits at, so a sentence
+# built from interpolated counts can be wrapped to match rather than run long beside them.
+_PROSE_WIDTH = 88
 
 # PRE_REGISTRATION section 4.1 as stamped by Amendment 1.
 IS_YEARS, OOS_YEARS = 4, 2
@@ -334,6 +339,16 @@ def main() -> int:
 
     L: list[str] = []
     w = L.append
+
+    def wp(text: str) -> None:
+        """Write a paragraph wrapped to the width the rest of this report is written at.
+
+        Every other prose line here is a hand-wrapped literal, so a sentence built from
+        interpolated counts has to be wrapped at emit time or it lands as one long line
+        among them. Tables are never routed through this -- a wrapped row stops being a row.
+        """
+        for line in textwrap.wrap(text, width=_PROSE_WIDTH):
+            w(line)
     w("# Phase 14 Gate Report")
     w("")
     w("**The backtest engine.**")
@@ -646,12 +661,12 @@ def main() -> int:
     w("Every cell carries its `n`, and the protocol's own labels are applied: under 30 is")
     w("**not reportable**, 30-99 is **suggestive** only, 100 or more is reportable.")
     if _n_cells:
-        w(f"Of the {_n_cells} cells below, **{_n_thin} are not reportable, {_n_sugg} "
-          f"suggestive and {_n_full} reportable**"
-          + (" — not one cell in this run reaches the protocol's own bar for a subgroup "
-             "finding, which is the honest headline of the whole section."
-             if not _n_full else
-             ", so only those last carry a subgroup finding at all."))
+        wp(f"Of the {_n_cells} cells below, **{_n_thin} are not reportable, {_n_sugg} "
+           f"suggestive and {_n_full} reportable**"
+           + (" — not one cell in this run reaches the protocol's own bar for a subgroup "
+              "finding, which is the honest headline of the whole section."
+              if not _n_full else
+              ", so only those last carry a subgroup finding at all."))
     w("")
     for name, cells in _breakdowns:
         w(f"**{name}**")

@@ -2,7 +2,7 @@
 
 **The backtest engine.**
 
-Generated 2026-08-31T14:44:05+00:00
+Generated 2026-08-31T15:03:20+00:00
 
 - `config_hash` `7f393e8ced4bf193f993f056380bffff2826fbeb71ba2a583d99e54f19b18c49`
 - `dataset_hash` `2a2bb0293052ae31bd2be73cfd53df25f6032f4db94da906543889e447d03ed9`
@@ -19,8 +19,8 @@ Generated 2026-08-31T14:44:05+00:00
 
 | Check | Result | Detail |
 |---|---|---|
-| Test suite green | PASS | 662 passed in 132.92s (0:02:12) |
-| Replay + shifted-data tests green (gate) | PASS | 2 passed, 19 deselected in 6.86s |
+| Test suite green | PASS | 662 passed in 146.26s (0:02:26) |
+| Replay + shifted-data tests green (gate) | PASS | 2 passed, 19 deselected in 7.59s |
 | Cost sensitivity run (gate) | PASS | expectancy reported at cost.multiplier 1.0x, 1.5x, 2.0x |
 | Costs are monotone: 2x never beats 1x | PASS | a cost applied with the wrong sign would show up here and nowhere else |
 | R is independent of the equity path | PASS | pass one cannot see equity; asserted by test, not by inspection |
@@ -235,7 +235,9 @@ Bars from sweep to MSS: median **4**, range 1-12.
 
 Every cell carries its `n`, and the protocol's own labels are applied: under 30 is
 **not reportable**, 30-99 is **suggestive** only, 100 or more is reportable.
-Of the 21 cells below, **14 are not reportable, 7 suggestive and 0 reportable** — not one cell in this run reaches the protocol's own bar for a subgroup finding, which is the honest headline of the whole section.
+Of the 21 cells below, **14 are not reportable, 7 suggestive and 0 reportable** — not
+one cell in this run reaches the protocol's own bar for a subgroup finding, which is the
+honest headline of the whole section.
 
 **Exit reason**
 

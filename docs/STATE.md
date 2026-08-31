@@ -1,12 +1,16 @@
 # Project State — pick-up point for a new session
 
-Last updated: 2026-08-30, after real data landed (10 symbols, 2019-2025) and the Phase 9
-gate was re-run on it as a measurement rather than a projection (D-020).
+Last updated: 2026-08-31, after the null was accepted (D-030) and written up as
+`docs/FINAL_RESULT.md`.
 
 This is the orientation document. It says where the project is, what is decided, what is
 deliberately not built yet, and what to do next. It does **not** repeat the specification
 (`SMC_STRATEGY_SPECIFICATION_v1.0.md`) or the reasoning behind each finding
 (`DECISIONS.md`) — read those for detail.
+
+**The project is concluded.** If you want the *result* rather than the state of the
+codebase, read [`FINAL_RESULT.md`](FINAL_RESULT.md) — it is the deliverable, written to
+protocol §10.2, and this file is now largely the record of how it was reached.
 
 ---
 
@@ -37,8 +41,9 @@ than finding one. §9 has the decision; D-028 has the per-link detail.
 | **Studies complete** | H5 (SPEC 6.9), the falsification suite (protocol 6.3/6.4), the ablation matrix (6.5) |
 | **Pre-registration** | **COMMITTED at v1.1 + Amendment 1** — `docs/PRE_REGISTRATION.md`, blob `646ddfb6db70` (D-018, re-registered by D-019, amended by D-021). **All seven of protocol §1's items are now fixed**: item 4's literal dates were stamped from §4.1's own rule on 2026-08-30 |
 | **Data** | **Real bars in.** 10 symbols × 2019-2025 M1, `dataset_hash 2a2bb029`, source histdata, bid side, tzdata 2026.3. Splits: in-sample 2019-2022, OOS 2023-2024, holdout 2025. **Q2 answered; Q1 (broker) still open** |
+| **Deliverable** | **`docs/FINAL_RESULT.md`** — the documented null, written to protocol §10.2 / pre-registration §7.5 |
 | **Tests** | 662, all passing |
-| **Commits** | 19, on `master` |
+| **Commits** | 35, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
@@ -674,11 +679,19 @@ caught it. Four mutations were run against the new suite and all four are now ca
 
 ## 8. The honest limitation
 
-**Every phase gate has now been re-run on real bars.** Real bars landed on 2026-08-30;
-**Phases 9-14** (§3 D-020, D-023, D-022, D-025, D-026, D-027) and **the H5 study**
-(§3a, D-024) are all measured on them. What is left on the fixture is **the
-falsification suite and the ablation matrix**. Where the text below still describes
-the fixture, it describes `--synthetic`, which every report still reproduces:
+**Everything that produces a strategy result is measured on real bars.** Real bars landed
+on 2026-08-30; **Phases 9-14** (§3 D-020, D-023, D-022, D-025, D-026, D-027), **the H5
+study** (§3a, D-024), **the falsification suite** (D-028) and **the ablation matrix**
+(D-029) are all measured on them.
+
+**What is still on the fixture is the detector layer below Phase 9** — the Phase 5, 6, 7
+and 8 gates, plus Phase 1's, which is against a superseded `dataset_hash` (`9f8736c4`).
+Those gates establish that the detectors are deterministic, causal and self-consistent,
+which is a property of the code and holds on any input, and the same detectors were then
+exercised on real bars throughout everything above. **The one thing genuinely lost to this
+is H2**: Phase 7 carries the forward-return study, so the directional edge of a confirmed
+sweep taken alone has no real-data answer at all. Where the text below still describes the
+fixture, it describes `--synthetic`, which every report still reproduces:
 
 - Sweep counts, rates, distributions, rejection rates and now the MSS funnel are
   properties of *the detectors meeting noise*. They prove the engines are deterministic,
@@ -702,20 +715,19 @@ the fixture, it describes `--synthetic`, which every report still reproduces:
   real data is the first result in this project that is about the market rather than
   about the fixture.**
 
-- **Phase 13's numbers split cleanly into three kinds**, and only the first two are worth
-  anything yet. *Arithmetic* (the four unreachable defaults, the cap crossovers, the
-  purity invariant) holds on any data and is the phase's real output. *Instrument
-  validation* (18/18 scenarios, the realised-risk distribution) says the machinery is
-  correct. *Measurements* (`M_eff` = 1.36, 100% ATR-cap binding, the USD 2,000 minimum
-  account, S4 arming on every setup) are fixture properties and several will move a lot —
-  the fixture's median H4 ATR is 17.4 pips, which is what keeps S4 under its 40-pip
-  ceiling and the pip cap out of play.
+- **Phase 13 has left this list.** Its numbers still split three ways — *arithmetic* (the
+  four unreachable defaults, the cap crossovers, the purity invariant) holds on any data,
+  *instrument validation* (18/18 scenarios) says the machinery is correct — but the
+  *measurements* are real now (D-026): `M_eff` = 1.32, S4's 40-pip ceiling **does** bind on
+  12% of setups and 47% of GBPUSD's, the USD 2,000 minimum account survived, and **6 of 10
+  symbols cannot be sized at all** for want of an FX rate. The prediction that the fixture's
+  17.4-pip median ATR was keeping S4 under its ceiling was correct.
 
-- **Phase 14 produced a complete equity curve and it means nothing.** Expectancy,
-  profit factor, Sharpe, drawdown — all of it is the detectors meeting noise, and every
-  confidence interval spans zero, which is the correct answer. The engine is validated;
-  the market is not real. What the phase establishes is that the chain runs end to end,
-  that R is computed in a pass which structurally cannot see equity, and that the two
+- **Phase 14 has left this list, and its equity curve now means something.** 102 trades,
+  expectancy −0.19 R, both CIs spanning zero (D-027) — on real bars that is a measurement,
+  not a tautology, and the correct reading is that 102 trades cannot separate a negative
+  point estimate from zero. What the phase established on the fixture still holds: the chain
+  runs end to end, R is computed in a pass which structurally cannot see equity, and the two
   tests SPEC 25.2/25.3 name are green.
 - **Of the three execution effects the fixture measured as exactly 0.0000, real bars
   moved one.** SPEC 15.3's lookahead is now **0.0156 ATR per entry** (D-025). The
@@ -725,21 +737,24 @@ the fixture, it describes `--synthetic`, which every report still reproduces:
   17.5's intrabar ambiguity (Phase 14) are **still unmeasured** — those reports have
   not been re-run. All remain pinned by constructed tests.
 
-- **The falsification suite's five arms are the sharpest case in the project.** Their
-  whole purpose is to answer "does this component contribute?", and this fixture answers
-  *no* for every one of them **by construction**, including the real ones. That makes them
-  the one place where the guaranteed null is also the publishable conclusion — §6.3 invites
-  the reader to act on it (*"rebuilt as a mean-reversion model and the SMC framing
-  dropped"*). Nothing in `reports/falsification.md` licenses that, and the report says so
-  before it says anything else. What the run does establish is the instrument, plus one
-  finding about the *acceptance criterion* that is independent of the data (§3d).
+- **The falsification suite has left this list, and it is the sharpest result in the
+  project.** Its five arms answer "does this component contribute?", and on real bars the
+  answer is *no* for liquidity identification, the sweep requirement and the ordering, and a
+  weak *yes* for the CHoCH step (D-028). On the fixture that null was guaranteed by
+  construction; here it is measured, and H3's `EQUIVALENT` is what finally licenses §6.3's
+  invitation (*"rebuilt as a mean-reversion model and the SMC framing dropped"*) — which
+  D-030 declined to act on, since acting on it is a new pre-registration. The
+  acceptance-criterion finding that was independent of the data (§3d) held up and decided
+  the verdict: two of three net-R "wins" were stop geometry.
 
-- **The ablation matrix splits the same three ways Phase 13 did**, and the split is
-  worth keeping in mind when reading it. *Structural*: the five components that cannot be
-  toggled, the OB wiring, the component coupling — true on any data. *Arithmetic*: T2 and
-  T3 arming nothing. *Measurements*: every delta, every CI, and every INERT row — real
-  bars trend, so trades last longer and the time stop, break-even and trailing may all
-  start to bite.
+- **The ablation matrix has left this list too**, and its *measurements* row was the one
+  prediction in this section that came back wrong. Real bars do trend, but **this
+  strategy's trades do not last long enough for a time stop, break-even or trail to reach
+  them**: 6 of 34 variants are still INERT and `exit.max_bars_in_trade` at 15, 30, 60 and
+  off are still identical runs (D-029 §2). That is a fact about the exit policy, not about
+  the market. *Structural* (the five components that cannot be toggled, the OB wiring, the
+  component coupling) and *arithmetic* (T2 and T3 arming nothing) were true on any data and
+  are unchanged.
 
 `bot/data/synthetic.py` says so in its own docstring and is never used to produce a
 strategy result.

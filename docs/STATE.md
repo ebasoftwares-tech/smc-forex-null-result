@@ -22,6 +22,11 @@ objective is not a profitable bot; it is a defensible answer to:
 `BACKTEST_PROTOCOL.md` §10.2 forbids tuning until it passes. **A documented null result
 is an accepted deliverable.** This has been agreed explicitly (D-003, Q17).
 
+**Both halves of that question are now answered, and the answer to the first is no**
+(D-030). The chain does not produce a measurable edge; the link that carries what little
+signal there is, is the CHoCH/displacement step, and it mostly avoids a bad entry rather
+than finding one. §9 has the decision; D-028 has the per-link detail.
+
 ---
 
 ## 2. Current status
@@ -741,11 +746,12 @@ strategy result.
 
 ---
 
-## 9. What to do next — a decision, not a queue
+## 9. The decision, and what it closed
 
-**Everything measurable has been measured.** Every phase gate and every protocol study
-now runs on real bars (§8). Nothing below is blocked on a run, on data, or on more code:
-the next step is a choice, and this section is a fork rather than a to-do list.
+**Everything measurable was measured, and the project reached its terminal decision on
+2026-08-31: the null is accepted (D-030).** Every phase gate and every protocol study runs
+on real bars (§8); nothing was left blocked on a run, on data, or on more code. What
+follows records the evidence, the fork that was open, and which branch was taken.
 
 ### What the evidence says, in one place
 
@@ -765,13 +771,19 @@ want of an FX conversion series (D-026), and **the development set answers nothi
 three separate studies could not resolve on it while their pooled counterparts could
 (rule 78).
 
-### The fork
+### The fork — **resolved: A, on 2026-08-31 (D-030)**
 
-**A — Accept the null and publish it.** `BACKTEST_PROTOCOL.md` §10.2 and D-003 (Q17) both
-say a documented null is an accepted deliverable, and this one is unusually well
-evidenced: an `EQUIVALENT` verdict on H3 is evidence of absence at the project's own
-declared tradable-edge margin, not absence of evidence. **Nothing further needs building.**
-On the evidence as it stands this is the option the project's own criteria point at.
+**A — Accept the null and publish it. TAKEN.** `BACKTEST_PROTOCOL.md` §10.2 and D-003
+(Q17) both say a documented null is an accepted deliverable, and this one is unusually
+well evidenced: an `EQUIVALENT` verdict on H3 is evidence of absence at the project's own
+declared tradable-edge margin, not absence of evidence. **Nothing further is built.** The
+strategy is not carried forward; the deliverable is the negative result and the evidence
+for it. See D-030 for the decision, what it does and does not claim, and the change
+control that governs reopening it.
+
+The two options **not** taken are kept below, because D-030 §5 makes either of them a new
+pre-registration rather than a continuation, and a future reader should see what was
+declined.
 
 **B — Diagnose, revise, and re-register.** The per-arm detail says *where* the chain
 fails, which is more than a bare null: liquidity identification contributes nothing, the
@@ -786,12 +798,12 @@ it only if a pass would change what you do; note that what it would confirm is a
 in-sample result that already fails §10.1. **The budget is spent by looking**, so this is
 not a free check.
 
-**None of these is taken here.** Whoever picks one should record it as a `D-0NN` entry
-before acting, because each changes what the other two mean.
+**A was taken (D-030).** B and C remain available only as new pre-registrations, and
+each must supersede D-030 explicitly.
 
-### If the answer is B or C, this is the order
+### If B or C is ever taken, this is the order
 
-Nothing here is worth starting under option A.
+**Not started, and not to be started under D-030.** Kept because it is the dependency order, and because knowing what was *not* built is part of the record.
 
 1. **Unblock Q1 — broker and FX conversion rates.** It now blocks three separate things:
    the swap table, the cross-sectional criterion, and the primary metric's sample size.

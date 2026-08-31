@@ -3665,3 +3665,110 @@ reached. §6.5's rule cannot tell those apart, which is why the matrix reports `
 
 **That T4 is worse than the default**, or better. q = 0.102 is a miss, and a miss is not
 evidence for the null.
+---
+
+## D-030 — The null is accepted: the project concludes with a documented negative result
+
+| | |
+|---|---|
+| **Date** | 2026-08-31 |
+| **Decided by** | Elie (instruction: *"accept the null"*) |
+| **Status** | ACTIVE — **this is the project's terminal decision** |
+| **Closes** | `STATE.md` §9's fork, option A |
+| **Rests on** | D-020, D-022 … D-029, and the pre-registration committed before any of them |
+
+### 1. The decision
+
+**The strategy is not carried forward.** No execution layer is built, no out-of-sample
+budget is spent, and no component is revised. The deliverable is the negative result and
+the evidence for it.
+
+This is not abandonment and it is not a failure of the project. `STATE.md` §1 states the
+objective in full:
+
+> *"Does the sequence liquidity → sweep → CHoCH/MSS → displacement → entry produce a
+> positive expectancy on FX majors that survives out-of-sample testing, transaction costs
+> and multiple-testing correction — **and if not, which link fails?**"*
+
+Both halves are now answered. The first is *no*. The second — which link — is answered in
+more detail than a bare null would give, and that detail is the substance of the
+deliverable.
+
+### 2. What the answer is
+
+| Link in the chain | Verdict | Source |
+|---|---|---|
+| Liquidity identification | **Contributes nothing.** A randomly placed level book performs the same | D-028 §2 |
+| The sweep requirement | **Contributes nothing.** Dropping it costs nothing measurable | D-028 §3 |
+| The ordering of the sequence | **Contributes nothing** in gross R | D-028 §1 |
+| The CHoCH / displacement step | **Contributes**, and is the only link that does | D-028 §3 |
+| — but | it mostly recovers from a bad entry rather than finding signal: entering at the sweep is *worse* than random timing, and the full sequence is level with random timing | D-028 §3 |
+| Displacement filtering (H5) | **Adds no measurable value** at h=1 and h=4 | D-024 |
+| The FVG concept standalone | **No directional edge** at any horizon | D-023 |
+
+And the headline the protocol asks for: **§10.1's deciding falsification row is not met**
+— the full model beats 3 of 5 controls in net R and 1 of 5 in gross, against a
+requirement of all five in both (D-028 §1). In-sample expectancy is −0.19 R with a
+confidence interval spanning zero (D-027).
+
+### 3. Why this is a strong null rather than a weak one
+
+Three properties distinguish it from "we looked and found nothing":
+
+- **`EQUIVALENT`, not `UNDERPOWERED`.** H3's interval sits *inside* the ±0.10 R margin —
+  the project's own declared threshold for a tradable edge, fixed in the pre-registration
+  before any arm ran. That is evidence of absence, not absence of evidence, and the
+  three-way verdict exists precisely to keep the two apart.
+- **The margin, the grid, `M` and the decision rules were all committed in advance**
+  (D-018, amended once mechanically at D-021). Nothing was chosen after seeing a result.
+- **The one criterion that could have produced a false pass was closed in advance.**
+  D-016 §1 found on synthetic data that net R can be won on stop-width geometry alone;
+  the pre-registration therefore required §10.1 to be judged in **both** currencies. On
+  real bars two of the three net-R "wins" turned out to be exactly that (D-028 §4).
+  **Had that rule not been fixed beforehand, this project would have reported a partial
+  success it did not have.**
+
+### 4. What this decision does *not* claim
+
+**Not that SMC concepts cannot work.** It claims that *this specification* of them —
+frozen defaults, this entry/stop/target configuration, H4 confirmation for every tier
+(D-002) — does not produce a measurable edge on ten FX majors over 2019-2022.
+
+**Not that the result is confirmed out of sample.** 2023-2024 and 2025 were never read.
+Under option B or C they would be the next step; under A they stay unspent, and the
+result is reported as in-sample.
+
+**Not that the measurement was as strong as it could be.** Two known limits, both
+recorded: only **4 of 10 symbols could be sized** for want of an FX conversion series
+(D-026), so the book is 102 trades against protocol §5.1's floor of 200; and the
+development set could not resolve any of three separate studies (rule 78).
+
+**Not that the engine is wrong.** Every gate passed, both controls in every study passed,
+the M1 fill path agreed with the bar-level rule on 7,877 armed orders (D-025), and the
+parallelised studies were verified against their serial equivalents. The instrument works;
+the strategy does not.
+
+### 5. Change control
+
+**Anything that reopens this is a new pre-registration, not an amendment.** Specifically:
+revising a component in the light of §2's table, spending out-of-sample budget, or
+re-running any study with a changed parameter. Each supersedes this entry and must say so.
+
+The pre-registration itself is untouched and stays valid: its own rule — *nothing may be
+changed after the first out-of-sample evaluation* — is not engaged, because there has not
+been one.
+
+### 6. What is preserved
+
+Everything needed to reproduce or contest the result:
+
+- `docs/PRE_REGISTRATION.md` at v1.1 + Amendment 1, with its blob hash in `STATE.md` §2.
+- `docs/DECISIONS.md` D-001 … D-030, every correction and finding in order.
+- The dataset (`dataset_hash 2a2bb029…`, 10 symbols × 2019-2025 M1) and the manifest that
+  identifies it.
+- Every report under `reports/`, regenerable from `scripts/*_report.py`; each script keeps
+  `--synthetic` so the original instrument-validation runs still reproduce.
+- 662 tests, green.
+
+A reader who disagrees with the conclusion has the pre-registration, the code, the data
+hash and the reports, and can check it.

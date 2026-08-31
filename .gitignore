@@ -2,7 +2,11 @@
 data/raw/*
 data/parquet/*
 !data/**/.gitkeep
+# Gate reports are tracked: FINAL_RESULT.md cites them as the evidence for the null, and
+# the dataset they are computed from cannot ship (2.2GB of licensed HistData), so a clone
+# with no reports cannot check the result at all. Anything else written here stays ignored.
 reports/*
+!reports/*.md
 __pycache__/
 *.pyc
 .pytest_cache/

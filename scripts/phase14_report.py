@@ -625,18 +625,35 @@ def main() -> int:
     # ------------------------------------------------------------ breakdowns
     w("## Breakdowns (protocol 4.2)")
     w("")
+    # Counted rather than asserted: the old sentence claimed "on this fixture almost every
+    # cell is not reportable", which survived the move to real bars as a claim about data
+    # it was never measured on. Every run now states its own distribution.
+    _breakdowns = [
+        (name, M.breakdown(baseline.trades, key))
+        for name, key in [
+            ("Exit reason", lambda t: t.exit_reason.value),
+            ("Liquidity source", lambda t: t.liq_source),
+            ("Liquidity tier", lambda t: f"tier {t.liq_tier}"),
+            ("Entry session", lambda t: t.entry_session),
+            ("Direction", lambda t: t.direction.value),
+        ]
+    ]
+    _cells = [c for _, cs in _breakdowns for c in cs]
+    _n_cells = len(_cells)
+    _n_thin = sum(1 for c in _cells if c.label == "not reportable")
+    _n_sugg = sum(1 for c in _cells if c.label == "suggestive")
+    _n_full = sum(1 for c in _cells if c.label == "reportable")
     w("Every cell carries its `n`, and the protocol's own labels are applied: under 30 is")
-    w("**not reportable**, 30-99 is **suggestive** only. On this fixture almost every cell")
-    w("is in the first category, which is the honest headline of the whole section.")
+    w("**not reportable**, 30-99 is **suggestive** only, 100 or more is reportable.")
+    if _n_cells:
+        w(f"Of the {_n_cells} cells below, **{_n_thin} are not reportable, {_n_sugg} "
+          f"suggestive and {_n_full} reportable**"
+          + (" — not one cell in this run reaches the protocol's own bar for a subgroup "
+             "finding, which is the honest headline of the whole section."
+             if not _n_full else
+             ", so only those last carry a subgroup finding at all."))
     w("")
-    for name, key in [
-        ("Exit reason", lambda t: t.exit_reason.value),
-        ("Liquidity source", lambda t: t.liq_source),
-        ("Liquidity tier", lambda t: f"tier {t.liq_tier}"),
-        ("Entry session", lambda t: t.entry_session),
-        ("Direction", lambda t: t.direction.value),
-    ]:
-        cells = M.breakdown(baseline.trades, key)
+    for name, cells in _breakdowns:
         w(f"**{name}**")
         w("")
         w("| Value | n | n_eff | Expectancy (R) | Win rate | Label |")
@@ -651,10 +668,11 @@ def main() -> int:
     w("")
     w("**Measured in ATR from the MSS close, not in R from the planned entry.** SPEC 21.3")
     w("asks for the latter and it distorts the answer twice: a bullish limit sits below the")
-    w("market, so measuring from it starts at a price the trade never paid (a median +1.7R")
-    w("with a 92% win rate *on a random walk*), and several gates reject a setup precisely")
-    w("*because its risk was wrong* -- `SL_TOO_TIGHT` rejects a 0.37-pip stop and dividing")
-    w("by it reported +7.0R. See D-015 section 7.")
+    w("market, so measuring from it starts at a price the trade never paid, and several")
+    w("gates reject a setup precisely *because its risk was wrong* -- `SL_TOO_TIGHT`")
+    w("rejects a 0.37-pip stop and dividing by it reported +7.0R. Both distortions were")
+    w("found on the fixture, where the first read a median +1.7R at a 92% win rate; the")
+    w("reasons are arithmetic and hold on any data. See D-015 section 7.")
     w("")
     w("*\"For each gate, what is the expectancy of the trades it rejected? A gate whose")
     w("rejected population has positive expectancy is destroying edge; one whose rejected")

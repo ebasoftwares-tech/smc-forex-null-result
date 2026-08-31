@@ -42,12 +42,12 @@ than finding one. §9 has the decision; D-028 has the per-link detail.
 | **Pre-registration** | **COMMITTED at v1.1 + Amendment 1** — `docs/PRE_REGISTRATION.md`, blob `646ddfb6db70` (D-018, re-registered by D-019, amended by D-021). **All seven of protocol §1's items are now fixed**: item 4's literal dates were stamped from §4.1's own rule on 2026-08-30 |
 | **Data** | **Real bars in.** 10 symbols × 2019-2025 M1, `dataset_hash 2a2bb029`, source histdata, bid side, tzdata 2026.3. Splits: in-sample 2019-2022, OOS 2023-2024, holdout 2025. **Q2 answered; Q1 (broker) still open** |
 | **Deliverable** | **`docs/FINAL_RESULT.md`** — the documented null, written to protocol §10.2 / pre-registration §7.5 |
-| **Tests** | 662, all passing |
+| **Tests** | 666, all passing |
 | **Commits** | 35, on `master` |
 | **Python** | 3.14 in `.venv`; deps pinned in `requirements.txt` |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/          # 662 tests, ~107s
+.venv/Scripts/python.exe -m pytest tests/          # 666 tests, ~130s
 .venv/Scripts/python.exe scripts/phase9_report.py  # the Phase 9 funnel gate, REAL bars (~9 min)
 .venv/Scripts/python.exe scripts/phase9_report.py --synthetic  # ... the original fixture
 .venv/Scripts/python.exe scripts/phase12_report.py  # the Phase 12 entry engine
@@ -65,7 +65,7 @@ than finding one. §9 has the decision; D-028 has the per-link detail.
 | 1 | Data ingest, UTC timeframe construction, session engine | `reports/phase1_gate.md` | 11/11; broker reconciliation **BLOCKED** on Q1 (Q2 answered — real bars ingested, and a resampler bug only they could find) |
 | 5 | H4 swing detection + market structure (BOS/CHoCH) | `reports/phase5_gate.md` | 7/7 |
 | 6 | Liquidity engine — sources, lifecycle, merge, rank | `reports/phase6_gate.md` | 8/8; sweep-rate half deferred to 7 |
-| 7 | Sweep detection + forward-return study (H2) | `reports/phase7_gate.md` | 7/7; closed Phase 6's deferred half |
+| 7 | Sweep detection + forward-return study (H2) | `reports/phase7_gate.md` | 8/8 **on real bars** — **H2 FALSIFIED**, `EQUIVALENT` on 28,004 sweeps, see D-031 |
 | 8 | Displacement + FVG detection | `reports/phase8_gate.md` | 8/8 |
 | 9 | CHoCH reference selection, MSS confirmation, **the funnel** | `reports/phase9_gate.md` | **9/10 on real bars — the development-set half of the gate FAILS**, see §3 and D-020 |
 | — | **H5 study**: MSS vs CHoCH-not-MSS (SPEC 6.9, run out of order) | `reports/marginal_value.md` | 8/8 — instrument validated, **H5 open** |
@@ -684,21 +684,24 @@ on 2026-08-30; **Phases 9-14** (§3 D-020, D-023, D-022, D-025, D-026, D-027), *
 study** (§3a, D-024), **the falsification suite** (D-028) and **the ablation matrix**
 (D-029) are all measured on them.
 
-**What is still on the fixture is the detector layer below Phase 9** — the Phase 5, 6, 7
-and 8 gates, plus Phase 1's, which is against a superseded `dataset_hash` (`9f8736c4`).
-Those gates establish that the detectors are deterministic, causal and self-consistent,
-which is a property of the code and holds on any input, and the same detectors were then
-exercised on real bars throughout everything above. **The one thing genuinely lost to this
-is H2**: Phase 7 carries the forward-return study, so the directional edge of a confirmed
-sweep taken alone has no real-data answer at all. Where the text below still describes the
-fixture, it describes `--synthetic`, which every report still reproduces:
+**What is still on the fixture is the detector layer below Phase 9** — the Phase 5, 6 and
+8 gates, plus Phase 1's, which is against a superseded `dataset_hash` (`9f8736c4`). Those
+gates establish that the detectors are deterministic, causal and self-consistent, which is
+a property of the code and holds on any input, and the same detectors were then exercised
+on real bars throughout everything above. **Phase 7 has left this list** (D-031): it was
+the one gate below Phase 9 carrying a measurement rather than a check, and H2 is now
+answered on real bars. Where the text below still describes the fixture, it describes
+`--synthetic`, which every report still reproduces:
 
 - Sweep counts, rates, distributions, rejection rates and now the MSS funnel are
   properties of *the detectors meeting noise*. They prove the engines are deterministic,
   causal and self-consistent.
-- The forward-return study correctly finds **nothing**, at every horizon. Had it found an
-  edge, the study would be broken.
-- **H2 is neither supported nor refuted.** It cannot be, on this data.
+- **H2 has left this list, and it is the best-powered result in the project.** Run on real
+  bars the forward-return study answers its own question at *every* horizon — `EQUIVALENT`
+  inside the ±0.25 ATR margin on 28,004 confirmed sweeps, against the 1,592 the widest
+  horizon needs (D-031). Under `--synthetic` it still correctly finds nothing, which is
+  the instrument validation it always was: had the fixture reported an edge, the study
+  would be broken.
 - **Phase 9 has left this list.** Its gate is a measurement now, and it FAILS (§3). The
   projection it used to rest on overstated the universe by 38% and the development set by
   57% — the size of error to expect from the rest. What survives unchanged is the
@@ -773,6 +776,7 @@ follows records the evidence, the fork that was open, and which branch was taken
 | | Result | Where |
 |---|---|---|
 | Phase 9 gate | **FAILS** — 97 dev-set MSS against 120 | D-020 |
+| H2, confirmed sweeps carry directional information | **FALSIFIED** — `EQUIVALENT` at every horizon on 28,004 sweeps | D-031 |
 | H3, real liquidity levels matter | **FALSIFIED** — a shuffled level book performs the same | D-028 §2 |
 | H4, the sequence matters | **Split** — the CHoCH step contributes, the sweep and the ordering do not | D-028 §3 |
 | H5, displacement filtering adds value | **EQUIVALENT** at h=1 and h=4 | D-024 |
@@ -899,10 +903,10 @@ of things than it used to:
   expectancy"* (pre-registration §3) — which is one of §10.1's go/no-go rows and is
   currently unevaluable.
 
-**H2-H5 are no longer open for want of data.** Every study has been re-run on real bars:
-H3 is falsified, H4 is split, H5 is answered at the short horizons, and H2's instrument
-was never the blocker. See §9's fork — the highest-value action is now a decision, not a
-run.
+**H2-H5 are all answered on real bars.** H2 is falsified (D-031, added after the terminal
+decision -- its instrument was never the blocker, but nothing had pointed it at the real
+data until then), H3 is falsified, H4 is split, and H5 is answered at the short horizons.
+Every component hypothesis that can be answered has been.
 
 ### Now that real data has landed, run these in this order
 

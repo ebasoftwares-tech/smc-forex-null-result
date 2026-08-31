@@ -3772,3 +3772,109 @@ Everything needed to reproduce or contest the result:
 
 A reader who disagrees with the conclusion has the pre-registration, the code, the data
 hash and the reports, and can check it.
+
+---
+
+## D-031 — H2 on real bars: the last open component hypothesis, falsified
+
+| | |
+|---|---|
+| **Date** | 2026-08-31 |
+| **Decided by** | Elie (instruction: *"complete the rest for this project"*) |
+| **Status** | ACTIVE |
+| **Answers** | **H2 — falsified** |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample, H4 from M1 |
+| **Report** | `reports/phase7_gate.md` — 8/8 checks PASS; fixture retained at `reports/phase7_gate_synthetic.md` |
+| **Does not supersede** | D-030. Nothing here reopens the null — see §5 |
+
+### 1. The answer
+
+**H2 — "confirmed sweeps carry directional information" — is `EQUIVALENT` at every
+horizon**, on 28,004 confirmed sweeps against 28,003 controls matched on session slot and
+volatility tercile:
+
+| h | n sweep | n control | diff (ATR) | 95% CI | needed for the margin | Verdict |
+|---:|---:|---:|---:|---|---:|---|
+| +1 | 28,004 | 28,003 | −0.0085 | [−0.0211, +0.0038] | 150 | **EQUIVALENT** |
+| +3 | 27,973 | 27,999 | −0.0192 | [−0.0397, +0.0010] | 383 | **EQUIVALENT** |
+| +6 | 27,964 | 27,988 | −0.0149 | [−0.0441, +0.0145] | 782 | **EQUIVALENT** |
+| +12 | 27,931 | 27,961 | −0.0427 | [−0.0851, +0.0003] | 1,592 | **EQUIVALENT** |
+
+Every interval lies inside the declared ±0.25 ATR margin, and by a wide margin: the widest
+of them spans 0.085 ATR against a 0.5 ATR-wide acceptance band. **`EQUIVALENT` at every
+horizon is the strongest form this verdict takes** — no horizon is underpowered, so
+nothing is left for a later run to resolve.
+
+**This is the best-powered study in the project**, and not narrowly: 28,004 events against
+the 1,592 the widest horizon needs, an 18× surplus. Compare H5, which could not resolve
+h=12 on 325 events (D-024), and the development set, which resolved nothing at all
+(rule 78). The reason is structural — H2 measures the funnel's *widest* stage, before the
+1.59% sweep→MSS conversion that makes everything downstream small.
+
+Every per-symbol diff is negative except two, but no per-symbol row is readable on its own
+and the report says so where it prints them.
+
+### 2. What it closes
+
+H2 was the **last open component hypothesis** and the one gap `FINAL_RESULT.md` §7 named
+as genuinely lost. `PRE_REGISTRATION.md` §1.2 calls the component hypotheses "the actual
+deliverable … because brief §33 asks which link breaks, not whether the whole chain pays",
+and their status is now complete: H2 falsified, H3 falsified, H4 split, H5 falsified at
+the horizons that resolve, H6 structurally blocked, H7 unsupported.
+
+**It corroborates D-028 §3 by an independent route.** That entry concluded the sweep
+requirement contributes nothing from an *arm comparison* — `choch_only`, which drops the
+sweep entirely, is `EQUIVALENT` to the baseline. This measures the same component
+directly, on the raw event population, with no CHoCH, no displacement, no entry model and
+no stops anywhere in the measurement. Two different instruments, two different sample
+sizes, same answer. That is a stronger claim than either made alone.
+
+### 3. Why this was worth running after the null was accepted
+
+The instrument always existed — `sweep_study.py` is Phase 7's, built in August — but
+`scripts/phase7_report.py` was synthetic-only, hardcoding `generate()` with no real-bar
+path. So H2 sat unanswered not because it was hard but because nothing had ever pointed
+the existing study at the data that arrived on 2026-08-30. Every other study was re-run
+that week; this one was missed, and the miss was invisible because the report still
+rendered and still passed its gate.
+
+Found while writing `FINAL_RESULT.md`: collecting the H2–H7 statuses into one table for
+the first time (protocol §1.2 calls them the deliverable, but nothing had ever listed
+them together) made the hole obvious.
+
+### 4. Two implementation notes
+
+**Pooling is by concatenating raw returns, never by averaging per-symbol effect sizes.**
+`sweep_study.HorizonResult` previously kept only summary statistics, so the old report
+took a mean of ten `diff` values — exactly what `fvg_study.pool_studies`' docstring warns
+against, since it discards the sample sizes that decide whether the question can be
+answered at all. On a fixture that was harmless; across ten symbols it would have produced
+a number with no interval anyone could read. `HorizonResult` now retains its samples and
+`pool_studies` concatenates them, mirroring `fvg_study`. Four tests pin it, including one
+asserting the pooled interval is *tighter* than either input's — which a mean of means
+cannot satisfy — and one refusing to pool a summary-only result rather than silently
+dropping its events.
+
+**The margin is the one already declared for the other two forward-return studies.**
+±0.25 ATR, as used for the FVG standalone test (D-023) and H5 (D-024). It is the same
+quantity being judged in the same units, and a different margin per study would make the
+three incomparable. Applied to H2 for the first time here, stated in the script above the
+result, and wide enough that the choice does not decide the verdict: the widest interval
+is a fifth of the band.
+
+### 5. What this does not do
+
+**It does not reopen D-030**, and nothing here is a new pre-registration. No parameter was
+changed, no component revised, no out-of-sample budget spent — this is the existing §6.1
+study, at its existing settings, run on the in-sample split it was always meant for. It
+strengthens the null rather than disturbing it.
+
+**It does not change the conclusion, only its evidence.** The chain still shows no
+measurable edge; what changes is that the sweep link is now falsified directly rather than
+inferred from an arm that removed it.
+
+**It does not make the detector gates real-bar.** Phases 5, 6 and 8 remain on the fixture,
+and Phase 1's gate is still against a superseded `dataset_hash`. Those establish
+determinism, causality and self-consistency — properties of the code that hold on any
+input — and were left alone deliberately. Phase 7 was worth doing because it carried a
+*measurement*, not because it was a gate.

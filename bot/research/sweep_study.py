@@ -55,6 +55,12 @@ class HorizonResult:
     diff: float
     ci_low: float
     ci_high: float
+    #: The raw ATR-normalised returns behind the summary above, retained for the same
+    #: reason ``fvg_study`` retains them: several runs can only be combined by pooling
+    #: samples, and a study that keeps only its own summary can never be pooled at all.
+    #: Empty on a result built before this existed, which ``pool_studies`` refuses.
+    sweep_returns: np.ndarray = field(default_factory=lambda: np.empty(0))
+    control_returns: np.ndarray = field(default_factory=lambda: np.empty(0))
 
     @property
     def significant(self) -> bool:
@@ -184,6 +190,8 @@ def run_study(
                 diff=float(s.mean() - c.mean()),
                 ci_low=lo,
                 ci_high=hi,
+                sweep_returns=s,
+                control_returns=c,
             )
         )
 
@@ -199,3 +207,73 @@ def run_study(
             r = forward_returns(series, bars, dirs, k, atr)
             study.by_source[src][k] = float(r.mean()) if len(r) else float("nan")
     return study
+
+
+def pool_studies(studies: Sequence[SweepStudy]) -> SweepStudy:
+    """Combine per-symbol studies by pooling raw returns, not by averaging verdicts.
+
+    The same rule ``fvg_study.pool_studies`` states: averaging effect sizes across runs
+    discards the sample sizes that make the power arithmetic meaningful. It matters more
+    here than there, because H2's whole question is whether an effect exists at all --
+    a mean of ten per-symbol means has no interval anyone can read, and the per-symbol
+    intervals are each too wide to answer it.
+
+    Raises rather than silently mis-pooling if a study was built without its samples.
+    """
+    if not studies:
+        return SweepStudy(horizons=DEFAULT_HORIZONS)
+    first = studies[0]
+    out = SweepStudy(horizons=first.horizons, bootstrap=first.bootstrap, seed=first.seed)
+    out.n_events = sum(s.n_events for s in studies)
+
+    rng = np.random.default_rng(first.seed)
+    for k in first.horizons:
+        rows = [r for s in studies for r in s.results if r.horizon == k]
+        if not rows:
+            continue
+        if any(r.sweep_returns.size == 0 and r.n_sweep > 0 for r in rows):
+            raise ValueError(
+                f"horizon {k}: a result carries no raw returns, so it predates sample "
+                "retention and cannot be pooled -- re-run the study rather than "
+                "combining summaries"
+            )
+        s = np.concatenate([r.sweep_returns for r in rows])
+        c = np.concatenate([r.control_returns for r in rows])
+        if s.size == 0 or c.size == 0:
+            continue
+        lo, hi = bootstrap_diff_ci(s, c, out.bootstrap, rng)
+        out.results.append(
+            HorizonResult(
+                horizon=k,
+                n_sweep=len(s),
+                n_control=len(c),
+                sweep_mean=float(s.mean()),
+                sweep_median=float(np.median(s)),
+                control_mean=float(c.mean()),
+                control_median=float(np.median(c)),
+                diff=float(s.mean() - c.mean()),
+                ci_low=lo,
+                ci_high=hi,
+                sweep_returns=s,
+                control_returns=c,
+            )
+        )
+
+    # Per-source means are re-derived as a sample-weighted average of the inputs', since
+    # the raw per-source returns are not retained: an unweighted mean would let a symbol
+    # with three events of a source count as much as one with three hundred.
+    srcs = sorted({k for s in studies for k in s.by_source})
+    for src in srcs:
+        out.by_source[src] = {}
+        for k in first.horizons:
+            vals = [
+                (s.by_source[src][k], s.n_events)
+                for s in studies
+                if src in s.by_source and k in s.by_source[src]
+                and np.isfinite(s.by_source[src][k])
+            ]
+            wsum = sum(w for _, w in vals)
+            out.by_source[src][k] = (
+                float(sum(v * w for v, w in vals) / wsum) if wsum else float("nan")
+            )
+    return out

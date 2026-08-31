@@ -29,6 +29,7 @@ Every row is in-sample (2019-2022), on ten FX majors, real bars:
 | | Result |
 |---|---|
 | Phase 9 funnel gate | **FAILS** on its development-set half — 97 MSS against a floor of 120 |
+| H2 — confirmed sweeps carry directional information | **FALSIFIED.** `EQUIVALENT` at every horizon, on 28,004 sweeps |
 | H3 — real liquidity levels matter | **FALSIFIED.** A randomly placed level book performs the same |
 | H4 — the sequence matters | **Split.** The CHoCH step contributes; the sweep and the ordering do not |
 | H5 — displacement filtering adds value | **EQUIVALENT** at h=1 and h=4 |
@@ -62,7 +63,7 @@ project stopped rather than spending it.
 | 1 | [docs/FINAL_RESULT.md](docs/FINAL_RESULT.md) | **The result.** The answer, which link fails, the measured evidence, the unsupported assumptions mapped to spec sections, and what to test next as a new pre-registration. |
 | 2 | [docs/STATE.md](docs/STATE.md) | Where the project is, what is decided, what must not be re-derived. Start here if you are picking the codebase up. |
 | 3 | [docs/PRE_REGISTRATION.md](docs/PRE_REGISTRATION.md) | The hypotheses, thresholds, splits, TUNABLE grid, `M`, and decision rule — **committed before the first run**, blob `646ddfb6db70`. This is what makes the result checkable. |
-| 4 | [docs/DECISIONS.md](docs/DECISIONS.md) | **The decision log**, D-001 … D-030. Every correction and finding in order, ending with D-030, the terminal decision. |
+| 4 | [docs/DECISIONS.md](docs/DECISIONS.md) | **The decision log**, D-001 … D-031. Every correction and finding in order. D-030 is the terminal decision; D-031 closes the last open component hypothesis after it. |
 | 5 | [docs/SMC_STRATEGY_SPECIFICATION_v1.0.md](docs/SMC_STRATEGY_SPECIFICATION_v1.0.md) | **The spec.** Every concept normally described visually — "price sweeps liquidity", "displacement", "change of character" — reduced to an arithmetic rule over OHLC bars, with a confirmation time, a parameter set, an invalidation condition, and a test that proves it never uses information from the future. |
 | 6 | [docs/BACKTEST_PROTOCOL.md](docs/BACKTEST_PROTOCOL.md) | The scientific protocol: falsification suite, walk-forward design, Monte Carlo, multiple-testing correction, the OOS budget ledger, and §10.2 — what the failure case must deliver. |
 | 7 | [docs/PARAMETERS.md](docs/PARAMETERS.md) | The parameter registry — 140 parameters, each **FROZEN**, **ABLATION-ONLY** or **TUNABLE**. Only 8 are tunable. This classification is the project's main defence against overfitting. |
@@ -77,7 +78,7 @@ Phases 1 and 5-14. Each ends in a gate report that states what it does **not** e
 | 1 | Data ingest, UTC timeframe construction, session engine | `reports/phase1_gate.md` | 11/11; broker reconciliation BLOCKED on Q1 |
 | 5 | H4 swings + market structure (BOS / CHoCH) | `reports/phase5_gate.md` | 7/7 |
 | 6 | Liquidity engine — sources, lifecycle, merge, rank | `reports/phase6_gate.md` | 8/8 |
-| 7 | Sweep detection + forward-return study (H2) | `reports/phase7_gate.md` | 7/7 — and **H2 is the one component hypothesis with no real-data answer** |
+| 7 | Sweep detection + forward-return study (H2) | `reports/phase7_gate.md` | 8/8 — **H2 falsified**, `EQUIVALENT` on 28,004 sweeps (D-031) |
 | 8 | Displacement + FVG detection | `reports/phase8_gate.md` | 8/8 |
 | 9 | CHoCH reference selection, MSS confirmation, **the funnel** | `reports/phase9_gate.md` | 9/10 — **the development-set half FAILS** (D-020) |
 | 10 | FVG lifecycle, selection, standalone edge test | `reports/phase10_gate.md` | 10/10 — **no standalone FVG edge** (D-023) |
@@ -89,11 +90,12 @@ Phases 1 and 5-14. Each ends in a gate report that states what it does **not** e
 | — | Ablation matrix (protocol §6.5) | `reports/ablation.md` | 34 variants, every default stands (D-029) |
 | — | H5 study — MSS vs CHoCH-not-MSS (SPEC 6.9) | `reports/marginal_value.md` | **EQUIVALENT** at h=1 and h=4 (D-024) |
 
-**Phase 9 onwards is measured on real bars; the detector gates below it are not.** Phases
-5-8 are still the synthetic fixture and Phase 1 is against a superseded `dataset_hash` —
-they establish that the detectors are deterministic, causal and self-consistent, which holds
-on any input, and those detectors were then exercised on real bars throughout Phases 9-14.
-The one thing genuinely lost to this is H2 (`docs/FINAL_RESULT.md` §7).
+**Everything that produces a measurement is on real bars.** Phases 5, 6 and 8 are still the
+synthetic fixture and Phase 1 is against a superseded `dataset_hash` — they establish that
+the detectors are deterministic, causal and self-consistent, which holds on any input, and
+those detectors were then exercised on real bars throughout Phases 9-14. Phase 7 was the one
+gate below Phase 9 that carried a *measurement* rather than a check, and it is now real too
+(D-031).
 
 Phase 5 was built before 2-4 deliberately: Monthly/Weekly/Daily analysis is the *same* engine
 instantiated on other bar series (SPEC 7.1). **Phases 2-4 and 15-17 were never started.**
@@ -105,12 +107,13 @@ UTC 00:00. Every script keeps `--synthetic`, so the original instrument-validati
 reproduce; `bot/data/synthetic.py` is never used to produce a strategy result.
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/                   # 662 tests, ~110s
+.venv/Scripts/python.exe -m pytest tests/                   # 666 tests, ~130s
 .venv/Scripts/python.exe scripts/phase9_report.py           # the funnel gate             ~9 min
 .venv/Scripts/python.exe scripts/phase14_report.py          # the backtest                ~9 min
 .venv/Scripts/python.exe scripts/falsification_report.py    # protocol 6.3/6.4   --workers 5, ~52 min
 .venv/Scripts/python.exe scripts/ablation_report.py         # protocol 6.5       --workers 5, ~50 min
 .venv/Scripts/python.exe scripts/marginal_value_report.py   # the H5 study
+.venv/Scripts/python.exe scripts/phase7_report.py           # H2, the sweep study     ~12 min
 ```
 
 ## Non-negotiable invariants

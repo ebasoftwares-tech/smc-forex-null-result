@@ -26,6 +26,7 @@ The evidence, in one table. Every row is in-sample (2019-2022), on ten FX majors
 | | Result | Source |
 |---|---|---|
 | Phase 9 funnel gate | **FAILS** on its development-set half — 97 MSS against a floor of 120 | D-020 |
+| H2 — confirmed sweeps carry directional information | **FALSIFIED.** `EQUIVALENT` at every horizon, on 28,004 sweeps | D-031 |
 | H3 — real liquidity levels matter | **FALSIFIED.** A randomly placed level book performs the same | D-028 §2 |
 | H4 — the sequence matters | **Split.** The CHoCH step contributes; the sweep and the ordering do not | D-028 §3 |
 | H5 — displacement filtering adds value | **EQUIVALENT** at h=1 and h=4; underpowered at h=12 | D-024 |
@@ -55,9 +56,13 @@ not for want of an effect. It is recorded that way rather than as FAIL because �
 precisely to stop this project claiming knowledge its sample does not contain.
 
 **What is *not* inconclusive is the component evidence.** H3's interval sits inside the
-±0.10 R margin declared before any arm ran, and the FVG and H5 studies are `EQUIVALENT`
+±0.10 R margin declared before any arm ran, and the H2, FVG and H5 studies are `EQUIVALENT`
 against a ±0.25 ATR margin declared the same way. `EQUIVALENT` is the only verdict in the
 three-way scheme that licenses the word "no". Those are answers, in-sample, on real bars.
+
+H2 is the strongest of them and worth separating: it resolves at **every** horizon on
+28,004 events, against the 1,592 the widest horizon needed. Nothing in this project is
+better powered, and nothing else here comes with an 18× surplus over its own requirement.
 
 ---
 
@@ -70,7 +75,7 @@ whether the whole chain pays."* Their status at the close of the project:
 
 | Id | Hypothesis | Status | Source |
 |---|---|---|---|
-| H2 | Confirmed sweeps carry directional information | **OPEN.** Phase 7 carries its instrument and was never re-run on real bars — the only component hypothesis with no real-data answer at all | §7 |
+| H2 | Confirmed sweeps carry directional information | **FALSIFIED.** `EQUIVALENT` at all four horizons, every interval inside the ±0.25 ATR margin, on 28,004 sweeps against matched controls | D-031 |
 | H3 | Real liquidity levels matter | **FALSIFIED.** `EQUIVALENT` inside the ±0.10 R margin | D-028 §2 |
 | H4 | The *sequence* matters | **SPLIT, and too coarse a hypothesis for what the data says.** The CHoCH requirement contributes; the sweep requirement and the ordering do not | D-028 §3 |
 | H5 | Displacement filtering adds value | **FALSIFIED at h=1 and h=4**; underpowered at h=12 | D-024 |
@@ -86,7 +91,7 @@ and a real bias gate could only reduce it.
 | Link in the chain | Verdict | Evidence |
 |---|---|---|
 | Liquidity identification | **Contributes nothing** | `shuffled_liquidity` is `EQUIVALENT` to the baseline in both currencies |
-| The sweep requirement | **Contributes nothing** | `choch_only` — drop the sweep entirely — is `EQUIVALENT`, and nominally the highest gross expectancy of any arm |
+| The sweep requirement | **Contributes nothing**, on two independent measurements | `choch_only` — drop the sweep entirely — is `EQUIVALENT`, and nominally the highest gross expectancy of any arm (D-028); and the sweeps themselves carry no directional information, measured directly on 28,004 of them (H2, D-031) |
 | The ordering of the sequence | **Contributes nothing in gross R** | `reversed_order` is `EQUIVALENT` in gross; its net-R "win" is stop geometry (§4.2) |
 | The CHoCH / MSS step | **Contributes — the only link that does** | `sweep_only` is beaten in both currencies |
 | — but read against the floor | it recovers from a bad entry rather than finding signal | entering at the sweep (−0.021) is **worse than random timing** (−0.010); the full sequence (+0.003) is level with random timing |
@@ -189,6 +194,23 @@ difference in conversion, not in raw material. **No registered parameter value r
 
 ### 4.5 The component studies
 
+**H2 — do confirmed sweeps carry directional information** (`reports/phase7_gate.md`,
+D-031), margin ±0.25 ATR, controls matched on session slot and volatility tercile. This is
+SPEC 9.7's study, deliberately independent of the strategy: no CHoCH, no displacement, no
+entry model, no stops:
+
+| h | n sweep | n control | diff (ATR) | 95% CI | needed for the margin | Verdict |
+|---:|---:|---:|---:|---|---:|---|
+| +1 | 28,004 | 28,003 | −0.0085 | [−0.0211, +0.0038] | 150 | **EQUIVALENT** |
+| +3 | 27,973 | 27,999 | −0.0192 | [−0.0397, +0.0010] | 383 | **EQUIVALENT** |
+| +6 | 27,964 | 27,988 | −0.0149 | [−0.0441, +0.0145] | 782 | **EQUIVALENT** |
+| +12 | 27,931 | 27,961 | −0.0427 | [−0.0851, +0.0003] | 1,592 | **EQUIVALENT** |
+
+The widest interval spans 0.085 ATR against a 0.5 ATR-wide acceptance band. Pooled by
+concatenating raw returns across all ten symbols, never by averaging per-symbol effect
+sizes — no single symbol's interval comes near the margin, which is why the pooled sample
+exists.
+
 **H5 — displacement filtering** (`reports/marginal_value.md`, D-024), margin ±0.25 ATR:
 
 | h | n MSS | diff (ATR) | 95% CI | MDE | Verdict |
@@ -244,7 +266,7 @@ Mapped to the specification section that made each one.
 | Assumption | Where it is stated | What the data says |
 |---|---|---|
 | Identified liquidity levels are where price is drawn, and identifying them correctly matters | SPEC §8 (esp. 8.1, 8.3, 8.6, 8.8) | **Unsupported.** A shuffled level book performs the same (H3, `EQUIVALENT`) |
-| A sweep of liquidity is the event that starts a setup | SPEC §9; invariant 2 | **Unsupported.** Removing the requirement costs nothing measurable, and entering *at* the sweep is worse than random timing |
+| A sweep of liquidity is the event that starts a setup | SPEC §9; invariant 2 | **Unsupported, and measured directly.** A confirmed sweep does not move the next 1-12 H4 bars in its own direction (H2, `EQUIVALENT` on 28,004 events). Removing the requirement also costs nothing measurable, and entering *at* the sweep is worse than random timing |
 | The *order* liquidity → sweep → CHoCH carries information | SPEC §14, §20; invariant 2 | **Unsupported in gross R.** Reversing it is `EQUIVALENT` |
 | Displacement filtering separates good MSS from bad | SPEC §10, and SPEC 6.9's H5 | **Unsupported** at h=1 and h=4 |
 | An unmitigated FVG marks a directional imbalance | SPEC §12 | **Unsupported** at every horizon — though the strategy does not use it this way (§4.5) |
@@ -319,17 +341,18 @@ study passed, the M1 fill path agreed with the bar-level rule on 7,877 armed ord
 and every parallelised study was verified against its serial equivalent. **The instrument
 works; the strategy does not.**
 
-**Three specific things remain unmeasured**, and are named rather than buried:
+**Two specific things remain unmeasured**, and are named rather than buried:
 
-- **The detector-level gates were never re-run on real bars, and H2 is the casualty.**
-  Phases 5, 6, 7 and 8 (`reports/phase5_gate.md` … `phase8_gate.md`) are all still the
-  synthetic fixture, and `reports/phase1_gate.md` is against a superseded `dataset_hash`
-  (`9f8736c4`), not the one every result above uses. What those gates establish is that the
-  detectors are deterministic, causal and self-consistent — properties of the code, which
-  hold on any input — and the detectors were then exercised on real bars throughout Phases
-  9-14 and every study here. **What is genuinely lost is H2**: Phase 7 carries the
-  forward-return study, so the directional edge of a confirmed sweep *taken alone* has no
-  real-data answer at all.
+- **Three detector-level gates were never re-run on real bars.** Phases 5, 6 and 8
+  (`reports/phase5_gate.md`, `phase6_gate.md`, `phase8_gate.md`) are still the synthetic
+  fixture, and `reports/phase1_gate.md` is against a superseded `dataset_hash` (`9f8736c4`),
+  not the one every result above uses. What those gates establish is that the detectors are
+  deterministic, causal and self-consistent — properties of the code, which hold on any
+  input — and the detectors were then exercised on real bars throughout Phases 9-14 and
+  every study here. **Phase 7 was the one that mattered and it is now real** (D-031): it
+  carried the H2 forward-return study, which is a measurement rather than a gate, and
+  leaving it on the fixture was the difference between an answered and an unanswered
+  component hypothesis.
 - **One cell in the falsification report is unverified** (D-028 §6): the claim that
   `choch.max_reference_distance_atr` "rejects nothing" is a fixture measurement carried into
   a real-bars report, and D-020 found that same parameter binding differently on real data.
@@ -351,15 +374,16 @@ Everything needed to check or contest this result is in the repository.
 | **Splits** | in-sample 2019-2022 (every result here) · out-of-sample 2023-2024 (**unspent**) · holdout 2025 (**unspent**) |
 | **Declared `M`** | 9,600 (pre-registration §5); measured `M_eff` 1.68 for the OB bake-off (D-022), 1.32 for the stop models (D-026) |
 | **Margins** | ±0.10 R for the falsification and primary comparisons, ±0.25 ATR for the forward-return studies — both declared before any result was read |
-| **Tests** | 662, green |
+| **Tests** | 666, green |
 | **Decision log** | `docs/DECISIONS.md` D-001 … D-030, every correction and finding in order |
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/                   # 662 tests, ~110s
+.venv/Scripts/python.exe -m pytest tests/                   # 666 tests, ~130s
 .venv/Scripts/python.exe scripts/phase9_report.py           # the funnel gate             ~9 min
 .venv/Scripts/python.exe scripts/phase14_report.py          # the backtest                ~9 min
 .venv/Scripts/python.exe scripts/marginal_value_report.py   # H5
 .venv/Scripts/python.exe scripts/phase10_report.py          # the FVG edge test
+.venv/Scripts/python.exe scripts/phase7_report.py           # H2, the sweep study     ~12 min
 .venv/Scripts/python.exe scripts/falsification_report.py    # protocol 6.3/6.4   --workers 5, ~52 min
 .venv/Scripts/python.exe scripts/ablation_report.py         # protocol 6.5       --workers 5, ~50 min
 ```

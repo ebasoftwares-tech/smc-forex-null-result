@@ -22,6 +22,7 @@ from bot.core.sweeps import SweepEvent, SweepEventType
 from bot.research.sweep_study import (
     DEFAULT_HORIZONS,
     forward_returns,
+    pool_studies,
     run_study,
 )
 
@@ -207,3 +208,59 @@ def test_per_source_breakdown_covers_every_source_present(cfg):
     assert set(study.by_source) == {"SESSION_LOW", "PREV_DAY_LOW"}
     for src, per_h in study.by_source.items():
         assert set(per_h) == set(DEFAULT_HORIZONS)
+
+
+# --------------------------------------------------------------- pooling across symbols
+
+
+def test_pooling_concatenates_samples_rather_than_averaging_verdicts(cfg):
+    """The pooled result must be the study of the combined sample, not a mean of means.
+
+    Positive control for `pool_studies`: two runs of the same planted edge pool to the
+    same effect with a *tighter* interval, because pooling doubles the sample. Averaging
+    the two `diff` values would reproduce the effect and leave the interval alone, which
+    is the failure this asserts against.
+    """
+    s1, e1 = _planted(600, drift_atr=0.4, seed=9, side=Side.SELL_SIDE)
+    s2, e2 = _planted(600, drift_atr=0.4, seed=11, side=Side.SELL_SIDE)
+    a = run_study(s1, e1, cfg, bootstrap=800)
+    b = run_study(s2, e2, cfg, bootstrap=800)
+    pooled = pool_studies([a, b])
+
+    pa, pb = a.results[0], b.results[0]
+    pp = pooled.results[0]
+    assert pp.n_sweep == pa.n_sweep + pb.n_sweep
+    assert pooled.n_events == a.n_events + b.n_events
+    # The edge survives pooling...
+    assert pp.diff > 0.3
+    # ...and the interval is tighter than either input's, which a mean of means is not.
+    assert (pp.ci_high - pp.ci_low) < min(
+        pa.ci_high - pa.ci_low, pb.ci_high - pb.ci_low
+    )
+
+
+def test_pooling_a_null_and_an_edge_lands_between_them(cfg):
+    """Mutation check: pooling must be driven by the samples, so a null run dilutes an
+    edge rather than being outvoted or ignored."""
+    s1, e1 = _planted(600, drift_atr=0.6, seed=3, side=Side.SELL_SIDE)
+    s2, e2 = _planted(600, drift_atr=0.0, seed=5, side=Side.SELL_SIDE)
+    edge = run_study(s1, e1, cfg, bootstrap=800)
+    null = run_study(s2, e2, cfg, bootstrap=800)
+    pooled = pool_studies([edge, null])
+    assert null.results[0].diff < pooled.results[0].diff < edge.results[0].diff
+
+
+def test_pooling_refuses_results_that_carry_no_samples(cfg):
+    """A summary-only result predates sample retention. Pooling it would silently drop
+    its events from the combined n, so it raises instead."""
+    s1, e1 = _planted(600, drift_atr=0.4, seed=9, side=Side.SELL_SIDE)
+    a = run_study(s1, e1, cfg, bootstrap=800)
+    for r in a.results:
+        r.sweep_returns = np.empty(0)
+        r.control_returns = np.empty(0)
+    with pytest.raises(ValueError, match="raw returns"):
+        pool_studies([a])
+
+
+def test_pooling_nothing_is_an_empty_study():
+    assert pool_studies([]).results == []

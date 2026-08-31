@@ -741,17 +741,86 @@ strategy result.
 
 ---
 
-## 9. What to do next
+## 9. What to do next — a decision, not a queue
 
-Phase 9 was the decision point, it has now been answered on real bars, and **it did not
-pass** (§3, D-020): the universe half clears, the development-set half misses by 23, and
-no registered parameter value closes the gap. That is a live decision rather than a
-formality, and it lands on top of H5 — built, validated and **open**, and whose own
-finding was that part of it may not be answerable even on real data (§3a). A 97-event
-development sample is smaller than H5's power arithmetic assumed.
+**Everything measurable has been measured.** Every phase gate and every protocol study
+now runs on real bars (§8). Nothing below is blocked on a run, on data, or on more code:
+the next step is a choice, and this section is a fork rather than a to-do list.
 
-D-020 §8 sets out the four ways forward and takes none of them. What follows assumes the
-project continues in some form, because most of it is worth doing under any of them.
+### What the evidence says, in one place
+
+| | Result | Where |
+|---|---|---|
+| Phase 9 gate | **FAILS** — 97 dev-set MSS against 120 | D-020 |
+| H3, real liquidity levels matter | **FALSIFIED** — a shuffled level book performs the same | D-028 §2 |
+| H4, the sequence matters | **Split** — the CHoCH step contributes, the sweep and the ordering do not | D-028 §3 |
+| H5, displacement filtering adds value | **EQUIVALENT** at h=1 and h=4 | D-024 |
+| FVG standalone edge | **EQUIVALENT** at every horizon | D-023 |
+| §10.1's deciding falsification row | **NOT MET** — 3 of 5 in net R, 1 of 5 in gross | D-028 §1 |
+| In-sample expectancy | **−0.19 R**, CI spans zero, 102 trades | D-027 |
+| Ablation matrix | Every default stands; nothing survives BH at q = 0.10 | D-029 |
+
+Two structural facts sit underneath all of it: **only 4 of 10 symbols can be sized** for
+want of an FX conversion series (D-026), and **the development set answers nothing** —
+three separate studies could not resolve on it while their pooled counterparts could
+(rule 78).
+
+### The fork
+
+**A — Accept the null and publish it.** `BACKTEST_PROTOCOL.md` §10.2 and D-003 (Q17) both
+say a documented null is an accepted deliverable, and this one is unusually well
+evidenced: an `EQUIVALENT` verdict on H3 is evidence of absence at the project's own
+declared tradable-edge margin, not absence of evidence. **Nothing further needs building.**
+On the evidence as it stands this is the option the project's own criteria point at.
+
+**B — Diagnose, revise, and re-register.** The per-arm detail says *where* the chain
+fails, which is more than a bare null: liquidity identification contributes nothing, the
+sweep requirement contributes nothing, and the CHoCH step contributes mostly by avoiding a
+bad entry (`sweep_only` is worse than the random-time floor; the baseline is level with
+it). A revision aimed at that is legitimate — but changing a component after seeing these
+results is a **new pre-registration** (§10, D-018), and everything above becomes prior
+work reported as such.
+
+**C — Spend out-of-sample budget.** One evaluation on 2023-2024 under protocol §7. Worth
+it only if a pass would change what you do; note that what it would confirm is an
+in-sample result that already fails §10.1. **The budget is spent by looking**, so this is
+not a free check.
+
+**None of these is taken here.** Whoever picks one should record it as a `D-0NN` entry
+before acting, because each changes what the other two mean.
+
+### If the answer is B or C, this is the order
+
+Nothing here is worth starting under option A.
+
+1. **Unblock Q1 — broker and FX conversion rates.** It now blocks three separate things:
+   the swap table, the cross-sectional criterion, and the primary metric's sample size.
+   Six symbols cannot carry a sized trade without a quote→account rate series (D-026).
+2. **Build `events.jsonl` (SPEC 21.1).** The engine holds trades and rejections in memory
+   and the reports read them there, which inverts the specification — the log is meant to
+   be the primary artefact. Tolerable while one process does both; a hard blocker for
+   Phase 16, which reconciles a live log against a backtest.
+3. **Phase 15 — visualisation.** Gate: 20 trades reviewed by eye, and *any* chart-versus-log
+   disagreement is a blocker. Cheap, and the step most likely to surface an engine defect
+   the statistics cannot see.
+4. **The execution layer, none of which exists.** A broker adapter; a live loop with state
+   persisted across restarts; the kill switch actually watching `ops.kill_switch_file`
+   rather than being a pure predicate in `risk.py`; staleness detection
+   (`max_data_staleness_sec`); reconciliation of broker fills against the engine's.
+5. **Phase 16 — paper trading.** ≥60 days, ≥95% entry agreement and ≥90% on fills against
+   a same-period backtest. A divergence beyond that is a defect, not variance.
+6. **Phase 17 — live at `risk.pct_per_trade = 0.10%`**, and only if 16 passed *and* the
+   pre-registered OOS criteria were met (SPEC §27).
+
+Steps 4-6 are the bulk of the remaining work and none of it is written.
+
+### There is no runnable bot, and that is by design not omission
+
+`bot/` contains `config`, `core`, `data`, `backtest` and `research`. There is no live
+loop, no broker adapter, no order placement and no scheduler; `scripts/` builds the
+dataset or writes a report and does nothing else. Phases 15-17 were never started. What
+`scripts/phase14_report.py` runs is a backtest of the in-sample split — not a trading
+system, and not a thing that can be pointed at an account.
 
 ### The whole of `BACKTEST_PROTOCOL.md` §6 is built
 
@@ -795,13 +864,18 @@ of things than it used to:
   check did pass against Dukascopy on a sample day during ingest.
 - The spread and swap tables stay declared rather than measured: `cost.swap_pips_per_day`
   is empty, so every cost figure is a default and the reports say so.
-- H2-H5 stay open, but **no longer for want of data** — the studies simply have not been
-  re-run on real bars yet.
+- **Q1 now blocks the primary metric itself**, which was not known until D-026: six of
+  the ten symbols cannot be sized without a quote→account conversion series, so the
+  in-sample book is four symbols and 102 trades against protocol §5.1's floor of 200.
+  Reaching that floor needs the rate series, not more history (D-027 §2).
+- It also blocks the **cross-sectional criterion** — *"≥ 6 of 10 symbols with positive
+  expectancy"* (pre-registration §3) — which is one of §10.1's go/no-go rows and is
+  currently unevaluable.
 
-**Re-running the studies on real bars is now the highest-value action**, and §3's failing
-gate is what they have to be read against: a development set of 97 events is the sample
-every in-sample study is working with, which is smaller than any of their power
-arithmetic assumed.
+**H2-H5 are no longer open for want of data.** Every study has been re-run on real bars:
+H3 is falsified, H4 is split, H5 is answered at the short horizons, and H2's instrument
+was never the blocker. See §9's fork — the highest-value action is now a decision, not a
+run.
 
 ### Now that real data has landed, run these in this order
 

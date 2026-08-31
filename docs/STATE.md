@@ -342,12 +342,15 @@ D-016 §1 and belong in the pre-registration, before real bars.
    of the *last unbroken swing*. It reuses `MssEngine._major_reference` itself. The two
    counts are too close for a size check to catch the error (26 vs 82 on one fixture year,
    43 vs 41 on another — larger on one, smaller on the other).
-3. **Three guards nothing in the fixture reaches**, the same pattern D-014 §8 and D-015
-   named. One is worth separating: `choch.max_reference_distance_atr` rejects **nothing**
-   at its default of 3.0 (widest reference 2.81 ATR over 198 events) but **binds hard at
-   2.0**. Unlike D-014's four unreachable defaults this is a *measurement*, not arithmetic
-   — and it is the second place this same ABLATION parameter sits just past where the data
-   reaches (§3, the Phase 9 gate).
+3. **Two guards nothing in the fixture reaches, and one that real bars reach hard**, the
+   same pattern D-014 §8 and D-015 named. The third is worth separating because it is the
+   one this list got wrong: `choch.max_reference_distance_atr` rejects **nothing** at its
+   default of 3.0 *on the fixture* (widest reference 2.81 ATR over 198 events), and on real
+   bars rejects **34.6% of 112,264 references**, the widest at 15.01 ATR (D-032). Unlike
+   D-014's four unreachable defaults this is a *measurement*, not arithmetic — which is
+   exactly why it did not transfer. **A fixture measurement is not a measurement, and the
+   sign of the error is not predictable**: here a component described as dormant fires
+   constantly, where D-029 §2's prediction failed the other way round.
 4. **An end-to-end positive control does not exist and is hard.** The comparison layer has
    one and each arm's construction has one, but nothing shows a real conditional edge in
    the *price series* surviving the whole chain. Injecting drift after each MSS changes the

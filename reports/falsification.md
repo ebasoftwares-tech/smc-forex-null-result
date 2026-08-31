@@ -239,7 +239,7 @@ population. **Read the MDE column, not the n column**, when a verdict is
 | All three verdicts reachable | yes -- `DIFFERENT`, `EQUIVALENT` and `UNDERPOWERED` each pinned |
 | Declared margin pinned to section 10.1's threshold | yes -- 0.10 R |
 | Mutation check | **18/18 caught** (3 survived the first pass; see below) |
-| `tests/test_falsification.py` | PASS -- 30 passed in 7.76s |
+| `tests/test_falsification.py` | PASS -- 30 passed in 8.82s |
 
 ---
 
@@ -328,7 +328,7 @@ The two counts are close enough that a size check does not catch the error: on o
 fixture year the structure events outnumber the correct population and on another
 they do not, so the test asserts on *which bars fire* instead.
 
-### 4. Three guards nothing in the fixture reaches -- the pattern, for the third time
+### 4. Two guards nothing in the fixture reaches, and one that real bars reach hard
 
 D-014 section 8 and D-015 both recorded a rule enforced somewhere no test goes.
 Three of the first eighteen mutations here survived for the same reason:
@@ -337,14 +337,33 @@ Three of the first eighteen mutations here survived for the same reason:
 |---|---|
 | `placeholder_sweep`'s `trigger_bar` in the id key | No two legs in the fixture happen to share an extreme, so no collision occurs -- but `choch_only` scans every bar and two references broken three bars apart can share one |
 | `_leg_extreme`'s direction | Inverting it still produces trades and still reports a null, so only a direct test sees it |
-| `choch.max_reference_distance_atr` in `choch_only` | At the FROZEN default of 3.0 it rejects **nothing** -- the widest reference on this fixture sits at about 2.8 ATR |
+| `choch.max_reference_distance_atr` in `choch_only` | On the **fixture** it rejects nothing -- the widest reference there sits at about 2.8 ATR. **On real bars it is the opposite**: at the same FROZEN default of 3.0 it rejects **34.6%** of the references it sees |
 
-The third is worth separating from the other two: it is a **measurement, not an
-arithmetic impossibility** like D-014's four unreachable defaults. It is an ABLATION
-parameter over {2.0, 3.0, 4.0}, and **at 2.0 it binds hard** -- which is how the
-branch is now tested. It also echoes STATE.md section 3: the Phase 9 gate is not
-robust to this same parameter, and here it is again sitting just past where the data
-reaches.
+The third is worth separating from the other two, and it is the one this table got
+wrong. It is a **measurement, not an arithmetic impossibility** like D-014's four
+unreachable defaults -- and a measurement taken on a fixture does not transfer.
+D-028 section 6 flagged the old claim as unverified rather than repeat it with
+confidence; measuring it settled the matter in the other direction (D-032,
+`scripts/verify_reference_guard.py`, which anyone can re-run in about eight
+minutes):
+
+| | fixture | real bars, 10 symbols 2019-2022 |
+|---|---:|---:|
+| references evaluated | -- | 112,264 |
+| widest | ~2.8 ATR | **15.01 ATR** |
+| 99th percentile | -- | 7.58 ATR |
+| rejected at 3.0 | **none** | **38,871 (34.6%)** |
+
+**The arm's numbers are unaffected**, because the guard was applied exactly as
+specified while they were computed -- what was wrong was this report's description
+of what it does, not the run. But `choch_only` is a far more filtered arm than the
+old sentence implied, and any reading of it should account for a third of its
+candidate references never reaching the break test at all.
+
+It is an ABLATION parameter over {2.0, 3.0, 4.0}, and **at 2.0 it binds hard** on
+the fixture too -- which is how the branch is tested. It also echoes STATE.md
+section 3: the Phase 9 gate is not robust to this same parameter. The fixture had it
+sitting just past where the data reached; real data reaches five times past it.
 
 ### 5. Three asymmetries between the arms that no construction can remove
 

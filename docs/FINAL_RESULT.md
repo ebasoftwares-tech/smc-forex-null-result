@@ -128,6 +128,14 @@ H3's own interval is **+0.003 R per setup, CI [−0.010, +0.017]**, entirely ins
 ±0.10 R margin, on 43,965 shuffled-arm setups against the baseline's 1,616. Power is not
 the limitation.
 
+One caveat on reading `choch_only`, added after the fact (D-032): it is a more filtered arm
+than "drop the sweep and keep everything else" suggests. `choch.max_reference_distance_atr`
+removes **34.6%** of its candidate references before they reach the break test — a guard
+this report previously described as rejecting nothing, on the strength of a fixture
+measurement that did not transfer. The arm's numbers are unaffected, since the guard was
+applied as specified while they were computed; what changes is how generous the description
+was.
+
 ### 4.2 Judging in both currencies is what prevented a false pass
 
 `reversed_order` and `random_time` are `DIFFERENT` in net R and `EQUIVALENT` in gross.
@@ -341,7 +349,9 @@ study passed, the M1 fill path agreed with the bar-level rule on 7,877 armed ord
 and every parallelised study was verified against its serial equivalent. **The instrument
 works; the strategy does not.**
 
-**Two specific things remain unmeasured**, and are named rather than buried:
+**What remains unmeasured**, named rather than buried. Two of the three items this list
+held are now closed, one by measurement (D-031) and one by measurement contradicting it
+(D-032):
 
 - **Three detector-level gates were never re-run on real bars.** Phases 5, 6 and 8
   (`reports/phase5_gate.md`, `phase6_gate.md`, `phase8_gate.md`) are still the synthetic
@@ -353,9 +363,12 @@ works; the strategy does not.**
   carried the H2 forward-return study, which is a measurement rather than a gate, and
   leaving it on the fixture was the difference between an answered and an unanswered
   component hypothesis.
-- **One cell in the falsification report is unverified** (D-028 §6): the claim that
-  `choch.max_reference_distance_atr` "rejects nothing" is a fixture measurement carried into
-  a real-bars report, and D-020 found that same parameter binding differently on real data.
+- ~~One cell in the falsification report is unverified~~ — **measured, and it was false**
+  (D-032). `choch.max_reference_distance_atr` at 3.0 does not "reject nothing": on real bars
+  it rejects **34.6% of the 112,264 references it screens**, and the widest is 15.01 ATR
+  against the fixture's ~2.8. The suite's results are unaffected — the guard was applied as
+  specified while the arms ran — but `choch_only` is a more filtered arm than that sentence
+  implied, and the report now prints the measurement instead of the claim.
 - **Two of the three execution effects the fixture measured as exactly zero** — the S4 stop's
   movement at fill, and SPEC 17.5's intrabar ambiguity — were never re-measured on real bars.
   All three remain pinned by constructed tests.
@@ -392,7 +405,10 @@ Every script keeps `--synthetic`, so the original instrument-validation runs sti
 `bot/data/synthetic.py` is never used to produce a strategy result.
 
 **A reader who disagrees with this conclusion has the pre-registration, the code, the data
-hash and the reports, and can check it.**
+hash and the reports, and can check it.** That claim has now itself been checked: the
+falsification suite was recomputed in full — five arms, ten symbols, twenty seeds, 4,477
+seconds — and **every number came back identical** to the published one (D-032 §6). The
+only difference in the file was a test-suite wall-clock line.
 
 ---
 

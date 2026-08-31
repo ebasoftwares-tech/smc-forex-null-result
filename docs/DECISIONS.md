@@ -3878,3 +3878,118 @@ and Phase 1's gate is still against a superseded `dataset_hash`. Those establish
 determinism, causality and self-consistency — properties of the code that hold on any
 input — and were left alone deliberately. Phase 7 was worth doing because it carried a
 *measurement*, not because it was a gate.
+
+---
+
+## D-032 — The unverified guard cell, measured: it rejects a third of everything
+
+| | |
+|---|---|
+| **Date** | 2026-08-31 |
+| **Decided by** | Elie (instruction: *"complete the rest for this project"*) |
+| **Status** | ACTIVE |
+| **Closes** | D-028 §6, the one cell that entry flagged as unverified |
+| **Data** | `dataset_hash 2a2bb029…`, 10 symbols × 2019-2022 in-sample |
+| **Script** | `scripts/verify_reference_guard.py` — ~8 minutes, no arms, one `build_market` per symbol |
+| **Does not supersede** | D-030 or D-028's results. See §3 |
+
+### 1. The claim was false, by a factor of five
+
+`reports/falsification.md` §4 asserted that `choch.max_reference_distance_atr` at its
+FROZEN default of 3.0 *"rejects **nothing** — the widest reference on this fixture sits at
+about 2.8 ATR"*. D-028 §6 recorded that sentence as **unverified** — a fixture measurement
+carried into a real-bars report — and warned it might be false, since D-020 had found this
+same parameter binding differently on real data.
+
+It is false:
+
+| | fixture | real bars |
+|---|---:|---:|
+| references evaluated | — | 112,264 |
+| widest | ~2.8 ATR | **15.01 ATR** |
+| 99th percentile | — | 7.58 ATR |
+| rejected at 3.0 | **none** | **38,871 (34.6%)** |
+
+Per symbol the share is remarkably stable — 32.6% (GBPJPY) to 36.4% (USDCAD) — so this is
+a property of the rule meeting real price structure, not one symbol's quirk.
+
+**The direction of the error is the instructive part.** The fixture did not merely
+under-represent the tail; it inverted the finding. A guard filed under "nothing in the
+fixture reaches" turns out to remove more than a third of the population it screens.
+
+### 2. Why the fixture got it this wrong
+
+A random walk has no trends, so the leg extreme and the swing that becomes the CHoCH
+reference are never far apart in ATR terms — 2.8 was the whole range. Real markets trend,
+and a trending leg puts its extreme a long way from the last opposing swing. The quantity
+being measured is a distance between two structural features, and the fixture has almost
+none of the structure that creates the distance.
+
+This is the same lesson as D-029 §2's falsified INERT prediction, arriving from the
+opposite direction: there, real bars were expected to make dormant components fire and did
+not; here, a component confidently described as dormant fires constantly. **The
+generalisable rule is not "real bars bind harder" but "a fixture measurement is not a
+measurement", and the sign of the error is not predictable in advance.**
+
+### 3. What it does and does not affect
+
+**The falsification suite's results are unaffected.** The guard was applied exactly as
+specified while the arms ran — `falsification.py` line 423 is a plain `continue` on the
+threshold — so every delta, CI and verdict in D-028 was computed with the guard active on
+real bars. What was wrong was the report's *description* of the guard, not the run.
+
+**It changes how `choch_only` should be read.** That arm is far more filtered than the old
+sentence implied: about a third of its candidate references never reach the break test.
+The arm remains a valid control — the sweep is what was removed from it, and that is
+unchanged — but "drop the sweep and keep everything else" is a slightly generous
+description of a stream that is also losing a third of its references to a distance guard.
+
+**It does not reopen D-030 or change any conclusion.** No parameter was changed and
+nothing was re-registered; a false sentence about a published run was replaced with a
+measurement of it.
+
+**It leaves one thing open, deliberately.** Nobody has measured what the arms would look
+like at a threshold the real distribution does not saturate. That is a parameter change
+and therefore a new pre-registration under D-030 §5, not a correction — and it is exactly
+the move §10.2 forbids doing after seeing results.
+
+### 4. The report now shows the measurement rather than asserting it
+
+`scripts/falsification_report.py` carried the claim as a hardcoded literal, which is how a
+fixture observation survived into a real-bars report unnoticed. The section is rewritten
+to print both columns — fixture and real — and to name the script that produced the second,
+so the next reader can re-run it in eight minutes rather than trust it. The report was
+regenerated in full at `--workers 5` rather than hand-edited, so the file still matches the
+generator that writes it.
+
+`scripts/verify_reference_guard.py` is committed rather than thrown away, for the same
+reason: a claim that cost a session to check should cost the next person a command.
+
+### 5. One subtlety in the measurement, recorded because it changes the number
+
+The arm adds a reference to `fired` only *after* the whole chain passes, so a reference the
+guard rejects is **not** marked and returns for evaluation on later bars, at a new leg
+extreme and a new ATR — a different distance each time. The measurement therefore records
+every *evaluation* rather than one distance per reference; recording per reference would
+measure a population the guard never sees. That makes the reported set a superset of the
+arm's by the few evaluations `fired` would have suppressed after a setup was produced,
+which is the conservative direction: had nothing in it exceeded the threshold, nothing in
+the arm's subset could have either.
+
+### 6. The re-run reproduced the suite byte-for-byte
+
+Regenerating the report meant recomputing all five arms over 10 symbols × 20 seeds — 4,477
+seconds of building at `--workers 5`. **Every number came back identical**, including the
+arm-construction table (`baseline` 1,616 setups / 1,333 armed / 272; `shuffled_liquidity`
+43,965; `sweep_only` 28,005; `choch_only` 2,223; `reversed_order` 4,171; `random_time`
+32,320) and every delta, CI and verdict in §10.1's deciding row. The only non-prose
+difference in the whole file was the test suite's wall-clock line, 7.76s against 8.82s.
+
+That was not the purpose of the run and is worth more than the correction that prompted it:
+**D-028's results are reproducible on demand**, from the committed code and the named
+dataset hash, by anyone willing to spend the hour. `FINAL_RESULT.md` §8 claims a reader can
+check this project; this is the first time that claim has itself been checked.
+
+One incidental confirmation across studies: `sweep_only`'s 28,005 setups is exactly the
+confirmed-sweep count Phase 7 reports on the same split (D-031). The two studies build
+their populations by different routes and arrive at the same number.
